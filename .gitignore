@@ -1,0 +1,52 @@
+# Environment variables
+.env
+env/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Data directories
+data/raw/
+data/processed/
+data/chunks/
+data/embeddings/
+data/vectordb/
+
+# Logs
+*.log
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Data directories
+data/processed/
+data/chunks/
+data/embeddings/
+data/vectordb/
+
+# Logs
+*.log 
