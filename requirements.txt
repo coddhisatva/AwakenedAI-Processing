@@ -1,0 +1,22 @@
+# Document Processing
+unstructured>=0.10.0
+pypdf2>=3.0.0
+pdfminer.six>=20221105
+ebooklib>=0.18.0
+beautifulsoup4>=4.12.0
+nltk>=3.8.1
+
+# Vector Database
+chromadb>=0.4.0
+sentence-transformers>=2.2.2
+
+# RAG Framework
+langchain>=0.0.267
+langchain-openai>=0.0.2
+
+# OpenAI
+openai>=1.0.0
+
+# Utilities
+tqdm>=4.65.0
+python-dotenv>=1.0.0
