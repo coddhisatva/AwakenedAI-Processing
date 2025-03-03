@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import json
 from dotenv import load_dotenv
-from src.vector_store import ChromaVectorStore
+from src.storage.vector_store import ChromaVectorStore
 
 # Load environment variables
 load_dotenv()

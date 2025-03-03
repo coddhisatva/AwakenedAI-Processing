@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 from src.extraction.extractor import DocumentExtractor
 from src.processing.chunker import SemanticChunker
 from src.embedding.embedder import DocumentEmbedder
-from src.vector_store import ChromaVectorStore
-from src.rag_pipeline import RAGPipeline
+from src.storage.vector_store import ChromaVectorStore
+from src.pipeline.rag_pipeline import RAGPipeline
 
 # Load environment variables
 load_dotenv()
