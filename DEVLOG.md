@@ -20,7 +20,7 @@
 - Made Dev log
 - Properly Fixed and Tested Chunking
 - Properly Fixed and Tested Embedding
-- Decided Plan for Vector Database
+(- Decided Plan for Vector Database
   - Recommended Development Plan
     - Start with Chroma locally for initial development
       - Free, open-source vector DB for development phase
@@ -38,3 +38,6 @@
       - Use Pinecone trial strategically during final testing
       - Export vectors from development environment
       - Scale up to full collection in production environment
+)
+- Implemented and verified Chroma Vector Database with abstraction layer for local development
+	
