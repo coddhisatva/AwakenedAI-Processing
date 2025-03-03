@@ -48,13 +48,12 @@ class SemanticChunker:
         self.chunk_overlap = chunk_overlap
         self.min_chunk_size = min_chunk_size
         
-        # Track chunking statistics
+        # Track processing statistics
         self.stats = {
             "total_documents": 0,
-            "total_chunks": 0,
-            "avg_chunks_per_document": 0,
-            "documents_processed": 0,
-            "documents_failed": 0
+            "successful_documents": 0,
+            "failed_documents": 0,
+            "total_chunks": 0
         }
     
     def chunk_all_documents(self) -> Dict[str, Any]:
@@ -66,28 +65,27 @@ class SemanticChunker:
         """
         logger.info(f"Starting chunking of documents from {self.processed_dir}")
         
-        document_count = 0
-        chunk_count = 0
+        # Find all JSON files
+        json_files = list(self.processed_dir.glob("**/*.json"))
+        logger.info(f"Found {len(json_files)} processed documents")
         
-        for file_path in self.processed_dir.glob("**/*.json"):
-            if file_path.is_file():
-                self.stats["total_documents"] += 1
-                try:
-                    num_chunks = self._chunk_document(file_path)
-                    chunk_count += num_chunks
-                    document_count += 1
-                    self.stats["documents_processed"] += 1
-                except Exception as e:
-                    self.stats["documents_failed"] += 1
-                    logger.error(f"Failed to chunk {file_path}: {str(e)}")
+        # Process each file
+        for file_path in json_files:
+            self.stats["total_documents"] += 1
+            try:
+                # Skip book_metadata.csv if it exists
+                if file_path.name == "book_metadata.csv":
+                    continue
+                    
+                num_chunks = self._chunk_document(file_path)
+                self.stats["successful_documents"] += 1
+                self.stats["total_chunks"] += num_chunks
+                logger.info(f"Successfully chunked {file_path.name} into {num_chunks} chunks")
+            except Exception as e:
+                self.stats["failed_documents"] += 1
+                logger.error(f"Failed to chunk {file_path}: {str(e)}")
         
-        # Calculate average chunks per document
-        if document_count > 0:
-            self.stats["avg_chunks_per_document"] = chunk_count / document_count
-        
-        self.stats["total_chunks"] = chunk_count
-        
-        logger.info(f"Chunking complete. Created {chunk_count} chunks from {document_count} documents.")
+        logger.info(f"Chunking complete. Processed {self.stats['successful_documents']} documents successfully, {self.stats['failed_documents']} failed. Created {self.stats['total_chunks']} total chunks.")
         return self.stats
     
     def _chunk_document(self, file_path: Path) -> int:
@@ -95,205 +93,166 @@ class SemanticChunker:
         Chunk a single document into semantic chunks.
         
         Args:
-            file_path: Path to the processed document JSON file
+            file_path: Path to the processed document
             
         Returns:
             Number of chunks created
         """
-        logger.info(f"Chunking document: {file_path}")
+        # Load the processed document
+        with open(file_path, 'r', encoding='utf-8') as f:
+            document = json.load(f)
         
-        try:
-            # Load the document
-            with open(file_path, 'r', encoding='utf-8') as f:
-                document = json.load(f)
-            
-            content = document.get("content", "")
-            metadata = document.get("metadata", {})
-            
-            if not content:
-                logger.warning(f"No content found in {file_path}")
-                return 0
-            
-            # Create chunks
-            chunks = self._create_semantic_chunks(content, metadata)
-            
-            # Save chunks
-            output_dir = self.chunks_dir / file_path.stem
-            output_dir.mkdir(exist_ok=True, parents=True)
-            
-            for i, chunk in enumerate(chunks):
-                chunk_file = output_dir / f"chunk_{i+1:04d}.json"
-                with open(chunk_file, 'w', encoding='utf-8') as f:
-                    json.dump(chunk, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"Created {len(chunks)} chunks for {file_path}")
-            return len(chunks)
-            
-        except Exception as e:
-            logger.error(f"Error chunking {file_path}: {str(e)}")
-            raise
+        # Extract content and metadata
+        content = document.get("content", "")
+        metadata = document.get("metadata", {})
+        
+        if not content:
+            logger.warning(f"No content found in {file_path}")
+            return 0
+        
+        # Split the content into sentences
+        sentences = self._split_into_sentences(content)
+        
+        # Create chunks from sentences
+        chunks = self._create_chunks_from_sentences(sentences, metadata)
+        
+        # Save chunks to file
+        output_path = self.chunks_dir / f"{file_path.stem}_chunks.json"
+        self._save_chunks(output_path, chunks)
+        
+        return len(chunks)
     
-    def _create_semantic_chunks(self, content: str, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _split_into_sentences(self, text: str) -> List[str]:
         """
-        Create semantic chunks from document content.
+        Split text into sentences using NLTK.
         
         Args:
-            content: Document content text
+            text: Text to split
+            
+        Returns:
+            List of sentences
+        """
+        # Clean the text
+        text = self._clean_text(text)
+        
+        # Split into sentences
+        sentences = sent_tokenize(text)
+        
+        return sentences
+    
+    def _clean_text(self, text: str) -> str:
+        """
+        Clean text by removing extra whitespace and normalizing.
+        
+        Args:
+            text: Text to clean
+            
+        Returns:
+            Cleaned text
+        """
+        # Replace multiple newlines with a single one
+        text = re.sub(r'\n+', '\n', text)
+        
+        # Replace multiple spaces with a single one
+        text = re.sub(r' +', ' ', text)
+        
+        # Strip whitespace
+        text = text.strip()
+        
+        return text
+    
+    def _create_chunks_from_sentences(
+        self, 
+        sentences: List[str], 
+        metadata: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Create chunks from sentences with overlap.
+        
+        Args:
+            sentences: List of sentences
             metadata: Document metadata
             
         Returns:
-            List of chunk objects with content and metadata
-        """
-        # Split content into paragraphs
-        paragraphs = self._split_into_paragraphs(content)
-        
-        # Create initial chunks by combining paragraphs
-        chunks = []
-        current_chunk = ""
-        
-        for paragraph in paragraphs:
-            # If adding this paragraph would exceed the chunk size and we already have content,
-            # save the current chunk and start a new one
-            if len(current_chunk) + len(paragraph) > self.chunk_size and current_chunk:
-                if len(current_chunk) >= self.min_chunk_size:
-                    chunks.append(current_chunk)
-                current_chunk = paragraph
-            else:
-                # Add paragraph to current chunk
-                if current_chunk:
-                    current_chunk += "\n\n" + paragraph
-                else:
-                    current_chunk = paragraph
-        
-        # Add the last chunk if it's not empty
-        if current_chunk and len(current_chunk) >= self.min_chunk_size:
-            chunks.append(current_chunk)
-        
-        # Create overlapping chunks if needed
-        if self.chunk_overlap > 0 and len(chunks) > 1:
-            chunks = self._create_overlapping_chunks(paragraphs)
-        
-        # Format chunks with metadata
-        formatted_chunks = []
-        for i, chunk_text in enumerate(chunks):
-            chunk_obj = {
-                "chunk_id": i + 1,
-                "content": chunk_text,
-                "metadata": {
-                    **metadata,
-                    "chunk_index": i + 1,
-                    "total_chunks": len(chunks)
-                }
-            }
-            formatted_chunks.append(chunk_obj)
-        
-        return formatted_chunks
-    
-    def _split_into_paragraphs(self, text: str) -> List[str]:
-        """
-        Split text into paragraphs.
-        
-        Args:
-            text: Document text
-            
-        Returns:
-            List of paragraphs
-        """
-        # Split by double newlines to get paragraphs
-        paragraphs = re.split(r'\n\s*\n', text)
-        
-        # Filter out empty paragraphs
-        paragraphs = [p.strip() for p in paragraphs if p.strip()]
-        
-        return paragraphs
-    
-    def _create_overlapping_chunks(self, paragraphs: List[str]) -> List[str]:
-        """
-        Create chunks with overlap from paragraphs.
-        
-        Args:
-            paragraphs: List of document paragraphs
-            
-        Returns:
-            List of text chunks with overlap
+            List of chunks with metadata
         """
         chunks = []
-        current_chunk = ""
+        current_chunk = []
         current_size = 0
-        last_paragraph_index = 0
         
-        for i, paragraph in enumerate(paragraphs):
-            paragraph_size = len(paragraph)
+        for sentence in sentences:
+            sentence_size = len(sentence)
             
-            # If adding this paragraph would exceed the chunk size and we already have content,
+            # If adding this sentence would exceed the chunk size and we already have content,
             # save the current chunk and start a new one with overlap
-            if current_size + paragraph_size > self.chunk_size and current_chunk:
-                chunks.append(current_chunk)
+            if current_size + sentence_size > self.chunk_size and current_chunk:
+                # Create chunk with metadata
+                chunk_text = " ".join(current_chunk)
+                chunk = self._create_chunk_with_metadata(chunk_text, metadata, len(chunks) + 1)
+                chunks.append(chunk)
                 
                 # Start new chunk with overlap
-                overlap_start = max(0, i - max(1, self.chunk_overlap // 100))  # Use paragraph count for overlap
-                current_chunk = "\n\n".join(paragraphs[overlap_start:i]) + "\n\n" + paragraph
-                current_size = sum(len(p) for p in paragraphs[overlap_start:i+1]) + (i - overlap_start) * 4  # Add newlines
-                last_paragraph_index = i
-            else:
-                # Add paragraph to current chunk
-                if current_chunk:
-                    current_chunk += "\n\n" + paragraph
-                    current_size += paragraph_size + 4  # Add newlines
-                else:
-                    current_chunk = paragraph
-                    current_size = paragraph_size
-                last_paragraph_index = i
+                overlap_size = 0
+                overlap_chunk = []
+                
+                # Add sentences from the end of the previous chunk for overlap
+                for s in reversed(current_chunk):
+                    if overlap_size + len(s) <= self.chunk_overlap:
+                        overlap_chunk.insert(0, s)
+                        overlap_size += len(s) + 1  # +1 for space
+                    else:
+                        break
+                
+                current_chunk = overlap_chunk
+                current_size = overlap_size
+            
+            # Add the current sentence to the chunk
+            current_chunk.append(sentence)
+            current_size += sentence_size + 1  # +1 for space
         
-        # Add the last chunk if it's not empty
+        # Add the last chunk if it's not empty and meets minimum size
         if current_chunk and current_size >= self.min_chunk_size:
-            chunks.append(current_chunk)
+            chunk_text = " ".join(current_chunk)
+            chunk = self._create_chunk_with_metadata(chunk_text, metadata, len(chunks) + 1)
+            chunks.append(chunk)
         
         return chunks
     
-    def chunk_by_sentences(self, text: str) -> List[str]:
+    def _create_chunk_with_metadata(
+        self, 
+        text: str, 
+        doc_metadata: Dict[str, Any], 
+        chunk_index: int
+    ) -> Dict[str, Any]:
         """
-        Alternative chunking method that respects sentence boundaries.
+        Create a chunk with metadata.
         
         Args:
-            text: Document text
+            text: Chunk text
+            doc_metadata: Document metadata
+            chunk_index: Index of the chunk
             
         Returns:
-            List of chunks that respect sentence boundaries
+            Chunk with metadata
         """
-        # Split text into sentences
-        sentences = sent_tokenize(text)
+        return {
+            "content": text,
+            "metadata": {
+                **doc_metadata,
+                "chunk_index": chunk_index,
+                "chunk_size": len(text)
+            }
+        }
+    
+    def _save_chunks(self, output_path: Path, chunks: List[Dict[str, Any]]) -> None:
+        """
+        Save chunks to a JSON file.
         
-        chunks = []
-        current_chunk = ""
+        Args:
+            output_path: Path to save the chunks
+            chunks: List of chunks with metadata
+        """
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(chunks, f, ensure_ascii=False, indent=2)
         
-        for sentence in sentences:
-            # If adding this sentence would exceed the chunk size and we already have content,
-            # save the current chunk and start a new one
-            if len(current_chunk) + len(sentence) > self.chunk_size and current_chunk:
-                chunks.append(current_chunk)
-                
-                # Start new chunk with overlap if possible
-                if self.chunk_overlap > 0:
-                    # Find a good starting point for overlap
-                    overlap_text = current_chunk[-self.chunk_overlap:]
-                    # Find the first sentence boundary in the overlap
-                    sentence_boundary = overlap_text.find('. ') + 2
-                    if sentence_boundary > 2:  # Found a boundary
-                        current_chunk = current_chunk[-self.chunk_overlap + sentence_boundary:] + sentence
-                    else:
-                        current_chunk = sentence
-                else:
-                    current_chunk = sentence
-            else:
-                # Add sentence to current chunk
-                if current_chunk:
-                    current_chunk += " " + sentence
-                else:
-                    current_chunk = sentence
-        
-        # Add the last chunk if it's not empty
-        if current_chunk and len(current_chunk) >= self.min_chunk_size:
-            chunks.append(current_chunk)
-        
-        return chunks 
+        logger.info(f"Saved {len(chunks)} chunks to {output_path}") 
