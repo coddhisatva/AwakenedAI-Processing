@@ -17,6 +17,9 @@ try:
 except LookupError:
     nltk.download('punkt')
 
+# Make sure we have all required NLTK resources
+nltk.download('punkt')
+
 class SemanticChunker:
     """
     Handles semantic chunking of document content for better retrieval.
@@ -135,8 +138,14 @@ class SemanticChunker:
         # Clean the text
         text = self._clean_text(text)
         
-        # Split into sentences
-        sentences = sent_tokenize(text)
+        # Use a simpler approach if NLTK fails
+        try:
+            # Split into sentences using NLTK
+            sentences = sent_tokenize(text)
+        except Exception as e:
+            logger.warning(f"NLTK sentence tokenization failed: {str(e)}. Using fallback method.")
+            # Fallback to a simple regex-based sentence splitter
+            sentences = re.split(r'(?<=[.!?])\s+', text)
         
         return sentences
     
