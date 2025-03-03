@@ -151,9 +151,49 @@ Each component has a corresponding test script:
 - (To be implemented) `test_embedder.py`: Tests the embedding generation
 - (To be implemented) `test_retrieval.py`: Tests the vector search and retrieval
 
+## Vector Database Implementation
+
+After evaluating various vector database options, the following decision has been made:
+
+- **Production Target**: Pinecone (cloud-based managed service)
+- **Development Environment**: Chroma (local, self-hosted)
+- **Migration Strategy**: Abstraction layer to support both backends
+
+#### Development Approach:
+
+1. **Local Development with Chroma**
+   - Free, open-source vector database for initial development
+   - Similar API to cloud solutions for easier migration
+   - Will be used during the development and testing phases
+
+2. **Abstraction Layer**
+   - Implementation of a database interface that works with multiple vector DB backends
+   - Adapters for both Chroma and Pinecone
+   - Ensures seamless migration from development to production
+
+3. **Testing Strategy**
+   - Initial testing with a subset of 100-500 books
+   - Validation of core RAG functionality
+   - Performance testing and parameter optimization
+
+4. **Production Deployment**
+   - Migration to Pinecone when ready for full-scale deployment
+   - Strategic use of Pinecone trial during final testing phase
+   - Export of vectors from development environment to production
+   - Scaling to handle the full 10,000-15,000 book collection
+
+#### Vector Database Interface Implementation (to be implemented)
+
+The `VectorStore` interface will provide:
+- Abstract methods for adding documents/embeddings
+- Query methods for similarity search
+- Metadata filtering capabilities
+- Implementations for both Chroma and Pinecone
+
 ## Current Status
 
 - Document extraction is implemented and tested for PDF files
-- Semantic chunking is partially implemented
-- Embedding generation is partially implemented
+- Semantic chunking is implemented and tested
+- Embedding generation is implemented and tested
+- Vector database implementation plan decided (Chroma for development, Pinecone for production)
 - Vector database integration and RAG system are yet to be implemented 
