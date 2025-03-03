@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import time
@@ -14,6 +15,9 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Set OpenAI API key
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 class DocumentEmbedder:
     """
@@ -49,205 +53,162 @@ class DocumentEmbedder:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         
-        # Ensure OpenAI API key is set
-        if not os.getenv("OPENAI_API_KEY"):
-            raise ValueError("OPENAI_API_KEY environment variable is not set")
-        
-        # Initialize OpenAI client
-        self.client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        
-        # Track embedding statistics
+        # Track processing statistics
         self.stats = {
+            "total_files": 0,
+            "successful_files": 0,
+            "failed_files": 0,
             "total_chunks": 0,
-            "embedded_chunks": 0,
+            "successful_chunks": 0,
             "failed_chunks": 0,
-            "total_tokens": 0,
-            "estimated_cost": 0.0,
-            "documents_processed": 0
+            "api_calls": 0,
+            "api_errors": 0
         }
     
-    def embed_all_chunks(self) -> Dict[str, Any]:
+    def embed_documents(self, limit: Optional[int] = None) -> Dict[str, Any]:
         """
-        Generate embeddings for all chunks in the chunks directory.
+        Generate embeddings for all document chunks.
         
+        Args:
+            limit: Optional limit on the number of files to process (for testing)
+            
         Returns:
             Statistics about the embedding process
         """
-        logger.info(f"Starting embedding generation for chunks in {self.chunks_dir}")
+        logger.info(f"Starting embedding generation from {self.chunks_dir}")
         
-        # Get all chunk files
-        chunk_files = list(self.chunks_dir.glob("**/*.json"))
+        # Find all chunk files
+        chunk_files = list(self.chunks_dir.glob("**/*_chunks.json"))
         logger.info(f"Found {len(chunk_files)} chunk files")
         
-        # Process in batches
-        for i in range(0, len(chunk_files), self.batch_size):
-            batch = chunk_files[i:i+self.batch_size]
-            self._process_batch(batch)
+        # Apply limit if specified
+        if limit is not None:
+            chunk_files = chunk_files[:limit]
+            logger.info(f"Processing only {limit} files for testing")
         
-        # Calculate estimated cost (as of current OpenAI pricing)
-        # Ada embeddings cost $0.0001 per 1K tokens
-        self.stats["estimated_cost"] = (self.stats["total_tokens"] / 1000) * 0.0001
+        # Process each file
+        for file_path in chunk_files:
+            self.stats["total_files"] += 1
+            try:
+                num_chunks = self._embed_document_chunks(file_path)
+                self.stats["successful_files"] += 1
+                logger.info(f"Successfully embedded {file_path.name} with {num_chunks} chunks")
+            except Exception as e:
+                self.stats["failed_files"] += 1
+                logger.error(f"Failed to embed {file_path}: {str(e)}")
         
-        logger.info(f"Embedding generation complete. Processed {self.stats['embedded_chunks']} chunks.")
-        logger.info(f"Total tokens: {self.stats['total_tokens']}, Estimated cost: ${self.stats['estimated_cost']:.2f}")
+        logger.info(f"Embedding complete. Processed {self.stats['successful_files']} files successfully, {self.stats['failed_files']} failed.")
+        logger.info(f"Generated embeddings for {self.stats['successful_chunks']} chunks, {self.stats['failed_chunks']} failed.")
+        logger.info(f"Made {self.stats['api_calls']} API calls with {self.stats['api_errors']} errors.")
         
         return self.stats
     
-    def _process_batch(self, chunk_files: List[Path]) -> None:
+    def _embed_document_chunks(self, file_path: Path) -> int:
         """
-        Process a batch of chunk files.
+        Generate embeddings for chunks in a single document.
         
         Args:
-            chunk_files: List of paths to chunk files
-        """
-        chunks_to_embed = []
-        file_paths = []
-        
-        # Load chunks
-        for file_path in chunk_files:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    chunk = json.load(f)
-                
-                chunks_to_embed.append(chunk)
-                file_paths.append(file_path)
-                self.stats["total_chunks"] += 1
-            except Exception as e:
-                logger.error(f"Error loading chunk file {file_path}: {str(e)}")
-                self.stats["failed_chunks"] += 1
-        
-        # Generate embeddings
-        if chunks_to_embed:
-            try:
-                # Extract text content for embedding
-                texts = [chunk["content"] for chunk in chunks_to_embed]
-                
-                # Generate embeddings with retry logic
-                embeddings, token_count = self._generate_embeddings_with_retry(texts)
-                
-                # Update stats
-                self.stats["total_tokens"] += token_count
-                
-                # Save embeddings
-                for i, (embedding, chunk, file_path) in enumerate(zip(embeddings, chunks_to_embed, file_paths)):
-                    # Add embedding to chunk
-                    chunk["embedding"] = embedding
-                    
-                    # Save to embeddings directory
-                    doc_dir = file_path.parent.name
-                    output_dir = self.embeddings_dir / doc_dir
-                    output_dir.mkdir(exist_ok=True, parents=True)
-                    
-                    output_path = output_dir / file_path.name
-                    with open(output_path, 'w', encoding='utf-8') as f:
-                        json.dump(chunk, f, ensure_ascii=False, indent=2)
-                    
-                    self.stats["embedded_chunks"] += 1
-                
-                # Track unique documents processed
-                doc_dirs = set(file_path.parent.name for file_path in file_paths)
-                self.stats["documents_processed"] = len(doc_dirs)
-                
-            except Exception as e:
-                logger.error(f"Error generating embeddings for batch: {str(e)}")
-                self.stats["failed_chunks"] += len(chunks_to_embed)
-    
-    def _generate_embeddings_with_retry(self, texts: List[str]) -> tuple[List[List[float]], int]:
-        """
-        Generate embeddings with retry logic.
-        
-        Args:
-            texts: List of text strings to embed
+            file_path: Path to the chunks file
             
         Returns:
-            Tuple of (embeddings, token_count)
+            Number of chunks successfully embedded
         """
-        retries = 0
-        token_count = 0
+        # Load the chunks
+        with open(file_path, 'r', encoding='utf-8') as f:
+            chunks = json.load(f)
         
-        while retries < self.max_retries:
+        logger.info(f"Processing {len(chunks)} chunks from {file_path.name}")
+        self.stats["total_chunks"] += len(chunks)
+        
+        # Process chunks in batches
+        embedded_chunks = []
+        
+        for i in range(0, len(chunks), self.batch_size):
+            batch = chunks[i:i + self.batch_size]
+            
             try:
-                # Create embeddings
-                response = self.client.embeddings.create(
+                # Generate embeddings for the batch
+                embedded_batch = self._generate_embeddings_batch(batch)
+                embedded_chunks.extend(embedded_batch)
+                self.stats["successful_chunks"] += len(embedded_batch)
+                
+                # Add a small delay to avoid rate limits
+                time.sleep(0.1)
+                
+            except Exception as e:
+                self.stats["failed_chunks"] += len(batch)
+                logger.error(f"Failed to embed batch: {str(e)}")
+                
+                # If we hit a rate limit, wait longer
+                if "rate limit" in str(e).lower():
+                    logger.warning(f"Rate limit hit, waiting {self.retry_delay * 2} seconds")
+                    time.sleep(self.retry_delay * 2)
+        
+        # Save the embedded chunks
+        output_path = self.embeddings_dir / f"{file_path.stem.replace('_chunks', '')}_embeddings.json"
+        self._save_embeddings(output_path, embedded_chunks)
+        
+        return len(embedded_chunks)
+    
+    def _generate_embeddings_batch(self, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Generate embeddings for a batch of chunks using OpenAI's API.
+        
+        Args:
+            chunks: List of chunks to embed
+            
+        Returns:
+            List of chunks with embeddings
+        """
+        # Extract texts to embed
+        texts = [chunk["content"] for chunk in chunks]
+        
+        # Try to generate embeddings with retries
+        for attempt in range(self.max_retries):
+            try:
+                self.stats["api_calls"] += 1
+                
+                # Call OpenAI API to generate embeddings
+                response = openai.embeddings.create(
                     model=self.embedding_model,
                     input=texts
                 )
                 
-                # Extract embeddings
+                # Extract embeddings from response
                 embeddings = [data.embedding for data in response.data]
                 
-                # Get token count
-                token_count = response.usage.total_tokens
+                # Add embeddings to chunks
+                embedded_chunks = []
+                for i, chunk in enumerate(chunks):
+                    embedded_chunk = {
+                        "content": chunk["content"],
+                        "metadata": chunk["metadata"],
+                        "embedding": embeddings[i]
+                    }
+                    embedded_chunks.append(embedded_chunk)
                 
-                return embeddings, token_count
+                return embedded_chunks
                 
             except Exception as e:
-                retries += 1
-                logger.warning(f"Embedding API call failed (attempt {retries}/{self.max_retries}): {str(e)}")
+                self.stats["api_errors"] += 1
+                logger.warning(f"API error on attempt {attempt + 1}/{self.max_retries}: {str(e)}")
                 
-                if retries < self.max_retries:
-                    logger.info(f"Retrying in {self.retry_delay} seconds...")
-                    time.sleep(self.retry_delay)
+                if attempt < self.max_retries - 1:
+                    # Wait before retrying
+                    time.sleep(self.retry_delay * (attempt + 1))
                 else:
-                    logger.error(f"Failed to generate embeddings after {self.max_retries} attempts")
+                    # Max retries reached, re-raise the exception
                     raise
-        
-        # This should never be reached due to the raise in the loop
-        raise RuntimeError("Failed to generate embeddings")
     
-    def estimate_embedding_cost(self, sample_size: int = 100) -> Dict[str, Any]:
+    def _save_embeddings(self, output_path: Path, embedded_chunks: List[Dict[str, Any]]) -> None:
         """
-        Estimate the cost of embedding all chunks based on a sample.
+        Save embedded chunks to a JSON file.
         
         Args:
-            sample_size: Number of chunks to sample for estimation
-            
-        Returns:
-            Dictionary with cost estimation details
+            output_path: Path to save the embeddings
+            embedded_chunks: List of chunks with embeddings
         """
-        # Get all chunk files
-        chunk_files = list(self.chunks_dir.glob("**/*.json"))
-        total_chunks = len(chunk_files)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(embedded_chunks, f, ensure_ascii=False)
         
-        if total_chunks == 0:
-            return {
-                "estimated_total_chunks": 0,
-                "estimated_total_tokens": 0,
-                "estimated_total_cost": 0.0
-            }
-        
-        # Sample chunks
-        import random
-        sample_size = min(sample_size, total_chunks)
-        sample_files = random.sample(chunk_files, sample_size)
-        
-        # Load sample chunks and count tokens
-        total_sample_tokens = 0
-        
-        for file_path in sample_files:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    chunk = json.load(f)
-                
-                # Estimate tokens (rough approximation: 4 chars per token)
-                content = chunk.get("content", "")
-                estimated_tokens = len(content) // 4
-                total_sample_tokens += estimated_tokens
-                
-            except Exception as e:
-                logger.error(f"Error loading sample chunk file {file_path}: {str(e)}")
-        
-        # Calculate averages and estimates
-        avg_tokens_per_chunk = total_sample_tokens / sample_size
-        estimated_total_tokens = avg_tokens_per_chunk * total_chunks
-        
-        # Ada embeddings cost $0.0001 per 1K tokens
-        estimated_cost = (estimated_total_tokens / 1000) * 0.0001
-        
-        return {
-            "sample_size": sample_size,
-            "avg_tokens_per_chunk": avg_tokens_per_chunk,
-            "estimated_total_chunks": total_chunks,
-            "estimated_total_tokens": estimated_total_tokens,
-            "estimated_total_cost": estimated_cost
-        } 
+        logger.info(f"Saved {len(embedded_chunks)} embedded chunks to {output_path}") 
