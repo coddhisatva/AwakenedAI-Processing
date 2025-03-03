@@ -1,0 +1,149 @@
+# test_rag_pipeline.py
+import os
+import logging
+import shutil
+from pathlib import Path
+from dotenv import load_dotenv
+
+from src.extraction.extractor import DocumentExtractor
+from src.processing.chunker import SemanticChunker
+from src.embedding.embedder import DocumentEmbedder
+from src.vector_store import ChromaVectorStore
+from src.rag_pipeline import RAGPipeline
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def setup_test_directory():
+    """Set up a test directory with sample documents."""
+    test_dir = Path("data/test_docs")
+    os.makedirs(test_dir, exist_ok=True)
+    
+    # Create sample text files if they don't exist
+    sample_text1 = """
+    # Artificial Intelligence: An Overview
+    
+    Artificial intelligence (AI) is intelligence demonstrated by machines, as opposed to intelligence
+    displayed by animals and humans. AI applications include advanced web search engines, recommendation
+    systems, understanding human speech, self-driving cars, automated decision-making, and competing at
+    the highest level in strategic game systems.
+    
+    ## Machine Learning
+    
+    Machine learning is a field of inquiry devoted to understanding and building methods that 'learn',
+    that is, methods that leverage data to improve performance on some set of tasks. It is seen as a
+    part of artificial intelligence.
+    """
+    
+    sample_text2 = """
+    # The Philosophy of Knowledge
+    
+    Epistemology is the branch of philosophy concerned with knowledge. Epistemologists study the nature,
+    origin, and scope of knowledge, epistemic justification, the rationality of belief, and various related issues.
+    
+    ## Types of Knowledge
+    
+    Different philosophers have defined knowledge in different ways. One common approach defines knowledge as 
+    justified true belief. According to this approach, a statement must meet three criteria in order to be 
+    considered knowledge: it must be justified, true, and believed.
+    """
+    
+    with open(test_dir / "ai_overview.txt", "w") as f:
+        f.write(sample_text1)
+    
+    with open(test_dir / "philosophy.txt", "w") as f:
+        f.write(sample_text2)
+    
+    logger.info(f"Created test directory with sample documents at {test_dir}")
+    return test_dir
+
+def main():
+    """Test the RAG pipeline functionality."""
+    # Set up test directory
+    test_dir = setup_test_directory()
+    
+    # Set up directories
+    data_dir = Path("data")
+    vector_db_dir = data_dir / "vector_db"
+    os.makedirs(vector_db_dir, exist_ok=True)
+    
+    # Get configuration from environment variables
+    collection_name = os.getenv("COLLECTION_NAME", "rag_pipeline_test")
+    chunk_size = int(os.getenv("CHUNK_SIZE", "1000"))
+    chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "200"))
+    embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002")
+    
+    logger.info(f"Using collection name: {collection_name}")
+    logger.info(f"Chunk size: {chunk_size}, Chunk overlap: {chunk_overlap}")
+    logger.info(f"Embedding model: {embedding_model}")
+    
+    # Initialize components
+    logger.info("Initializing pipeline components...")
+    
+    extractor = DocumentExtractor(input_directory=str(test_dir))
+    chunker = SemanticChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    embedder = DocumentEmbedder(model_name=embedding_model)
+    vector_store = ChromaVectorStore(
+        collection_name=collection_name,
+        persist_directory=str(vector_db_dir)
+    )
+    
+    # Initialize RAG pipeline
+    logger.info("Initializing RAG pipeline...")
+    pipeline = RAGPipeline(
+        extractor=extractor,
+        chunker=chunker,
+        embedder=embedder,
+        vector_store=vector_store
+    )
+    
+    # Process test directory
+    logger.info("Processing test directory...")
+    total_chunks = pipeline.process_directory(str(test_dir), batch_size=2)
+    logger.info(f"Processing complete. Total chunks stored: {total_chunks}")
+    
+    # Test querying
+    logger.info("\nTesting queries...")
+    
+    # Test query about AI
+    ai_query = "What is artificial intelligence?"
+    ai_results = pipeline.query(ai_query, k=2)
+    
+    logger.info(f"Results for query: '{ai_query}'")
+    for i, result in enumerate(ai_results):
+        logger.info(f"Result {i+1}:")
+        logger.info(f"  Text: {result['text'][:150]}...")
+        logger.info(f"  Metadata: {result['metadata']}")
+        logger.info(f"  Score: {result['score']}")
+    
+    # Test query about philosophy
+    philosophy_query = "What is epistemology?"
+    philosophy_results = pipeline.query(philosophy_query, k=2)
+    
+    logger.info(f"\nResults for query: '{philosophy_query}'")
+    for i, result in enumerate(philosophy_results):
+        logger.info(f"Result {i+1}:")
+        logger.info(f"  Text: {result['text'][:150]}...")
+        logger.info(f"  Metadata: {result['metadata']}")
+        logger.info(f"  Score: {result['score']}")
+    
+    # Test metadata filtering
+    filter_query = "knowledge"
+    filter_dict = {"source": "philosophy.txt"}
+    filter_results = pipeline.query(filter_query, k=2, filter_dict=filter_dict)
+    
+    logger.info(f"\nResults for filtered query: '{filter_query}' with filter {filter_dict}")
+    for i, result in enumerate(filter_results):
+        logger.info(f"Result {i+1}:")
+        logger.info(f"  Text: {result['text'][:150]}...")
+        logger.info(f"  Metadata: {result['metadata']}")
+        logger.info(f"  Score: {result['score']}")
+    
+    logger.info("\nRAG pipeline test complete!")
+
+if __name__ == "__main__":
+    main()
