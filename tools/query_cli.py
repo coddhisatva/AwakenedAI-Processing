@@ -49,7 +49,7 @@ def setup_pipeline(db_dir, collection_name=None):
         collection_name = "awakened_ai_default"
     
     # Initialize vector store with the appropriate collection name
-    vector_store = ChromaVectorStore(persist_directory=db_dir, collection_name=collection_name)
+    vector_store = ChromaVectorStore(persist_directory=str(db_dir), collection_name=collection_name)
     
     # Return the RAG pipeline
     return RAGPipeline(
