@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from src.extraction.extractor import DocumentExtractor
 from src.processing.chunker import SemanticChunker
 from src.embedding.embedder import DocumentEmbedder
-from src.storage.vector_store import ChromaVectorStore
+from src.storage.vector_store import SupabaseVectorStore
 
 # Configure logging
 logging.basicConfig(
@@ -42,20 +42,13 @@ def setup_components(args):
     for dir_path in [raw_dir, processed_dir, chunks_dir, embeddings_dir]:
         dir_path.mkdir(exist_ok=True, parents=True)
     
-    # Use the provided db_dir or default
-    db_dir = args.db_dir if args.db_dir else data_dir / "vector_db"
-    Path(db_dir).mkdir(exist_ok=True, parents=True)
-    
-    # Use default collection name if none is provided
-    collection_name = args.collection if args.collection else "awakened_ai_default"
-    
     # Initialize components
     extractor = DocumentExtractor(raw_dir=raw_dir, processed_dir=processed_dir)
     chunker = SemanticChunker(processed_dir=processed_dir, chunks_dir=chunks_dir)
     embedder = DocumentEmbedder(chunks_dir=chunks_dir, embeddings_dir=embeddings_dir)
     
-    # Convert db_dir to string for ChromaDB
-    vector_store = ChromaVectorStore(persist_directory=str(db_dir), collection_name=collection_name)
+    # Initialize Supabase vector store
+    vector_store = SupabaseVectorStore()
     
     return {
         "extractor": extractor,
@@ -133,11 +126,11 @@ def process_documents(components, files_to_process):
             # Add to vector store
             vector_store.add_documents(embedded_chunks)
             total_chunks_added += len(embedded_chunks)
-            logger.info(f"Added {len(embedded_chunks)} chunks from {embedding_file.name} to vector store")
+            logger.info(f"Added {len(embedded_chunks)} chunks from {embedding_file.name} to Supabase")
         except Exception as e:
             logger.error(f"Error adding embeddings from {embedding_file} to vector store: {e}")
     
-    logger.info(f"Added a total of {total_chunks_added} chunks to vector store collection: {vector_store.collection_name}")
+    logger.info(f"Added a total of {total_chunks_added} chunks to Supabase")
     return total_chunks_added
 
 def main():
@@ -159,16 +152,6 @@ def main():
         "--specific_files", 
         nargs="+", 
         help="Specific files to process (full paths)"
-    )
-    parser.add_argument(
-        "--db_dir", 
-        type=str, 
-        help="Directory for the vector database"
-    )
-    parser.add_argument(
-        "--collection", 
-        type=str, 
-        help="Collection name for the vector database"
     )
     parser.add_argument(
         "--extensions", 
@@ -212,7 +195,7 @@ def main():
     # Process the documents
     total_chunks = process_documents(components, files_to_process)
     
-    logger.info(f"Processing complete. Added {total_chunks} chunks to vector store.")
+    logger.info(f"Processing complete. Added {total_chunks} chunks to Supabase.")
     if total_chunks > 0:
         logger.info(f"You can now query the system with: python tools/query_cli.py \"Your question here\"")
 

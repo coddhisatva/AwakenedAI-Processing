@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from src.extraction.extractor import DocumentExtractor
 from src.processing.chunker import SemanticChunker
 from src.embedding.embedder import DocumentEmbedder
-from src.storage.vector_store import ChromaVectorStore
+from src.storage.vector_store import VectorStoreBase
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,7 +21,7 @@ class RAGPipeline:
         extractor: DocumentExtractor,
         chunker: SemanticChunker,
         embedder: DocumentEmbedder,
-        vector_store: ChromaVectorStore
+        vector_store: VectorStoreBase
     ):
         """Initialize the RAG pipeline with all components."""
         self.extractor = extractor

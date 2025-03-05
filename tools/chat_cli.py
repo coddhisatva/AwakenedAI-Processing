@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from src.extraction.extractor import DocumentExtractor
 from src.processing.chunker import SemanticChunker
 from src.embedding.embedder import DocumentEmbedder
-from src.storage.vector_store import ChromaVectorStore
+from src.storage.vector_store import SupabaseVectorStore
 from src.pipeline.rag_pipeline import RAGPipeline
 from src.interface.query import QueryEngine
 from src.interface.llm import LLMService
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # Initialize rich console for pretty output
 console = Console()
 
-def setup_pipeline(db_dir=None, collection_name=None, model_name=None):
+def setup_pipeline(model_name=None):
     """Set up the RAG pipeline with all components."""
     # Define default directories
     data_dir = Path(os.path.join(os.path.dirname(__file__), "../data"))
@@ -55,20 +55,8 @@ def setup_pipeline(db_dir=None, collection_name=None, model_name=None):
     chunker = SemanticChunker(processed_dir=processed_dir, chunks_dir=chunks_dir)
     embedder = DocumentEmbedder(chunks_dir=chunks_dir, embeddings_dir=embeddings_dir)
     
-    # Use the provided db_dir or default
-    if not db_dir:
-        db_dir = data_dir / "vector_db"
-    Path(db_dir).mkdir(exist_ok=True, parents=True)
-    
-    # Use default collection name if none is provided
-    if collection_name is None:
-        collection_name = "awakened_ai_default"
-    
-    # Initialize vector store
-    vector_store = ChromaVectorStore(
-        persist_directory=str(db_dir),
-        collection_name=collection_name
-    )
+    # Initialize Supabase vector store
+    vector_store = SupabaseVectorStore()
     
     # Initialize pipeline
     pipeline = RAGPipeline(
@@ -167,18 +155,12 @@ def interactive_chat(query_engine):
 
 def main():
     parser = argparse.ArgumentParser(description="Chat with your document collection using LLM-powered responses")
-    parser.add_argument("--db_dir", type=str, help="Directory to store the vector database")
-    parser.add_argument("--collection", type=str, help="Name of the collection in the vector database")
     parser.add_argument("--model", type=str, help="OpenAI model to use (default: gpt-3.5-turbo)")
     args = parser.parse_args()
     
     try:
         # Set up the RAG system
-        query_engine = setup_pipeline(
-            db_dir=args.db_dir,
-            collection_name=args.collection,
-            model_name=args.model
-        )
+        query_engine = setup_pipeline(model_name=args.model)
         
         # Start interactive chat
         interactive_chat(query_engine)

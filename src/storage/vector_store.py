@@ -7,6 +7,11 @@ from abc import ABC, abstractmethod
 import chromadb
 from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
+import sys
+
+# Add import for SupabaseAdapter
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from database.supabase_adapter import SupabaseAdapter
 
 # Load environment variables
 load_dotenv()
@@ -214,3 +219,140 @@ class PineconeVectorStore(VectorStoreBase):
         """
         logger.warning("Pinecone implementation is a placeholder. No document returned.")
         return None
+
+class SupabaseVectorStore(VectorStoreBase):
+    """Supabase implementation of vector store."""
+    
+    def __init__(self):
+        """Initialize Supabase vector store."""
+        try:
+            self.adapter = SupabaseAdapter()
+            logger.info(f"Initialized Supabase vector store")
+        except Exception as e:
+            logger.error(f"Error initializing Supabase adapter: {str(e)}")
+            raise
+            
+    def add_documents(self, documents: List[Dict[str, Any]]) -> List[str]:
+        """
+        Add documents to the vector store.
+        
+        Args:
+            documents: List of document dictionaries with text, metadata, and embeddings
+            
+        Returns:
+            List of document IDs
+        """
+        if not documents:
+            logger.warning("No documents to add to vector store")
+            return []
+        
+        document_ids = []
+        
+        # Process each document
+        for doc in documents:
+            try:
+                # Extract document metadata
+                content = doc.get("content", doc.get("text", ""))
+                metadata = doc.get("metadata", {})
+                embedding = doc.get("embedding", [])
+                
+                # Extract document information from metadata
+                title = metadata.get("title", "Unknown")
+                author = metadata.get("author", "Unknown")
+                filepath = metadata.get("source", "")
+                
+                # Check if we already have this document based on filepath
+                # This is a simple approach - you might want more sophisticated duplicate detection
+                doc_id = None
+                
+                # Add document if it doesn't exist
+                if doc_id is None:
+                    doc_id = self.adapter.add_document(
+                        title=title,
+                        author=author,
+                        filepath=filepath
+                    )
+                
+                # Add the chunk with its embedding
+                chunk_id = self.adapter.add_chunk(
+                    document_id=doc_id,
+                    content=content,
+                    metadata=metadata,
+                    embedding=embedding
+                )
+                
+                document_ids.append(chunk_id)
+                
+            except Exception as e:
+                logger.error(f"Error adding document to Supabase: {str(e)}")
+        
+        logger.info(f"Added {len(document_ids)} chunks to Supabase")
+        return document_ids
+    
+    def search(self, query: str, k: int = 5, filter_dict: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Search for documents similar to the query.
+        
+        Args:
+            query: Search query text
+            k: Number of results to return
+            filter_dict: Optional metadata filters (not implemented for Supabase yet)
+            
+        Returns:
+            List of document dictionaries with text, metadata, and score
+        """
+        from src.embedding.embedder import DocumentEmbedder
+        
+        logger.info(f"Searching Supabase for: '{query}' with k={k}")
+        
+        # Generate embedding for the query
+        embedder = DocumentEmbedder()
+        query_embedding = embedder.get_embedding(query)
+        
+        # Search using the query embedding
+        results = self.adapter.search(query_embedding=query_embedding, limit=k)
+        
+        # Format results to match the interface
+        formatted_results = []
+        for result in results:
+            formatted_results.append({
+                "id": result.get("id", ""),
+                "text": result.get("content", ""),
+                "metadata": result.get("metadata", {}),
+                "score": result.get("similarity", 0.0)
+            })
+        
+        logger.info(f"Found {len(formatted_results)} results in Supabase")
+        return formatted_results
+    
+    def get_document(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a document by ID.
+        
+        Args:
+            doc_id: Document ID (in this case, a chunk ID)
+            
+        Returns:
+            Document dictionary or None if not found
+        """
+        try:
+            # Get the chunk by ID
+            chunk = self.adapter.get_chunk_by_id(doc_id)
+            
+            if chunk:
+                # Get the associated document
+                document = self.adapter.get_document_by_id(chunk.get("document_id", ""))
+                
+                return {
+                    "id": chunk.get("id", ""),
+                    "text": chunk.get("content", ""),
+                    "metadata": {
+                        **chunk.get("metadata", {}),
+                        "document_title": document.get("title", "") if document else "",
+                        "document_author": document.get("author", "") if document else ""
+                    }
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving document {doc_id} from Supabase: {str(e)}")
+            return None
