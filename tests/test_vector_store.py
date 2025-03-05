@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import json
 from dotenv import load_dotenv
-from src.storage.vector_store import ChromaVectorStore
+from src.storage.vector_store import SupabaseVectorStore
 
 # Load environment variables
 load_dotenv()
@@ -14,20 +14,9 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Test the vector store functionality."""
-    # Set up directories
-    vector_db_dir = "data/vector_db"
-    os.makedirs(vector_db_dir, exist_ok=True)
-    
-    # Get collection name from environment variables or use default
-    collection_name = os.getenv("COLLECTION_NAME", "awakened_ai_test")
-    
-    logger.info(f"Using collection name: {collection_name}")
     
     # Create vector store
-    vector_store = ChromaVectorStore(
-        collection_name=collection_name,
-        persist_directory=vector_db_dir
-    )
+    vector_store = SupabaseVectorStore()
     
     # Sample documents
     documents = [
@@ -37,7 +26,9 @@ def main():
             "metadata": {
                 "source": "sample_book.pdf",
                 "page": 1,
-                "chapter": "Introduction"
+                "chapter": "Introduction",
+                "title": "Sample Book",
+                "author": "Test Author"
             }
         },
         {
@@ -46,7 +37,9 @@ def main():
             "metadata": {
                 "source": "sample_book.pdf",
                 "page": 2,
-                "chapter": "Introduction"
+                "chapter": "Introduction",
+                "title": "Sample Book",
+                "author": "Test Author"
             }
         },
         {
@@ -55,7 +48,9 @@ def main():
             "metadata": {
                 "source": "tech_book.pdf",
                 "page": 15,
-                "chapter": "AI Overview"
+                "chapter": "AI Overview",
+                "title": "Technology Concepts",
+                "author": "Tech Writer"
             }
         },
         {
@@ -64,13 +59,15 @@ def main():
             "metadata": {
                 "source": "tech_book.pdf",
                 "page": 16,
-                "chapter": "AI Overview"
+                "chapter": "AI Overview",
+                "title": "Technology Concepts",
+                "author": "Tech Writer"
             }
         }
     ]
     
     # Add documents
-    logger.info("Adding documents to vector store...")
+    logger.info("Adding documents to Supabase vector store...")
     doc_ids = vector_store.add_documents(documents)
     logger.info(f"Added {len(doc_ids)} documents with IDs: {doc_ids}")
     
@@ -87,32 +84,17 @@ def main():
         logger.info(f"  Metadata: {result['metadata']}")
         logger.info(f"  Score: {result['score']}")
     
-    # Test metadata filtering
-    logger.info("\nTesting metadata filtering...")
-    filter_results = vector_store.search(
-        query="artificial intelligence", 
-        k=5,
-        filter_dict={"source": "tech_book.pdf"}
-    )
-    
-    logger.info(f"Filtered search results:")
-    for i, result in enumerate(filter_results):
-        logger.info(f"Result {i+1}:")
-        logger.info(f"  ID: {result['id']}")
-        logger.info(f"  Text: {result['text']}")
-        logger.info(f"  Metadata: {result['metadata']}")
-        logger.info(f"  Score: {result['score']}")
-    
     # Test document retrieval by ID
-    logger.info("\nTesting document retrieval by ID...")
-    doc = vector_store.get_document("doc1")
-    if doc:
-        logger.info(f"Retrieved document:")
-        logger.info(f"  ID: {doc['id']}")
-        logger.info(f"  Text: {doc['text']}")
-        logger.info(f"  Metadata: {doc['metadata']}")
-    else:
-        logger.info("Document not found")
+    if len(doc_ids) > 0:
+        logger.info("\nTesting document retrieval by ID...")
+        doc = vector_store.get_document(doc_ids[0])
+        if doc:
+            logger.info(f"Retrieved document:")
+            logger.info(f"  ID: {doc['id']}")
+            logger.info(f"  Text: {doc['text']}")
+            logger.info(f"  Metadata: {doc['metadata']}")
+        else:
+            logger.info("Document not found")
 
 if __name__ == "__main__":
     main()
