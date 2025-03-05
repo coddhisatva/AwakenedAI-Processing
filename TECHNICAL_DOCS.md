@@ -200,3 +200,10 @@ The `VectorStore` interface will provide:
   - Successfully processed multiple documents through the entire pipeline
   - Extracted text from PDFs, generated semantic chunks, created embeddings, and stored in ChromaDB
   - Processed 3816 chunks from 5 test documents
+
+  ___
+
+  ## Documents Currently Processed:
+  1. P. D. Ouspensky - The Fourth Way.pdf - A philosophical work on Gurdjieff's Fourth Way teaching
+  2. The_Beginning_of_Infinity_-David_Deutsch.pdf - A book on explanations and knowledge by physicist David Deutsch
+  3. _Dr_Mark_Sircus_Transdermal_Magnesium_Therapy_A_New_Modality_for.pdf - A book about magnesium therapy

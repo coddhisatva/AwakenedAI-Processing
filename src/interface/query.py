@@ -1,7 +1,8 @@
 # src/interface/query.py
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from src.pipeline.rag_pipeline import RAGPipeline
+from src.interface.llm import LLMService, RAGResponse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -9,10 +10,30 @@ logger = logging.getLogger(__name__)
 class QueryEngine:
     """Interface for querying the RAG system."""
     
-    def __init__(self, pipeline: RAGPipeline):
-        """Initialize with a RAG pipeline."""
+    def __init__(
+        self, 
+        pipeline: RAGPipeline,
+        llm_service: Optional[LLMService] = None,
+        default_result_count: int = 5
+    ):
+        """
+        Initialize the query engine.
+        
+        Args:
+            pipeline: RAG pipeline for retrieval
+            llm_service: LLM service for generating responses (if None, only retrieval is used)
+            default_result_count: Default number of results to retrieve
+        """
         self.pipeline = pipeline
-        logger.info("QueryEngine initialized")
+        self.default_result_count = default_result_count
+        
+        # Initialize LLM service if provided, otherwise create default
+        if llm_service:
+            self.llm_service = llm_service
+        else:
+            self.llm_service = LLMService()
+            
+        logger.info("QueryEngine initialized with LLM integration")
     
     def query(self, 
               query_text: str, 
@@ -20,7 +41,7 @@ class QueryEngine:
               filter_dict: Optional[Dict[str, Any]] = None,
               include_metadata: bool = True) -> Dict[str, Any]:
         """
-        Query the system and return formatted results.
+        Query the system and return formatted retrieval results without LLM synthesis.
         
         Args:
             query_text: User's natural language query
@@ -31,7 +52,7 @@ class QueryEngine:
         Returns:
             Dictionary with query, results, and sources
         """
-        logger.info(f"Processing query: '{query_text}'")
+        logger.info(f"Processing retrieval query: '{query_text}'")
         
         # Get raw results from pipeline
         results = self.pipeline.query(query_text, k, filter_dict)
@@ -67,38 +88,77 @@ class QueryEngine:
             "result_count": len(formatted_results)
         }
     
-    def ask(self, question: str, max_results: int = 5) -> str:
+    def ask(
+        self, 
+        question: str, 
+        max_results: int = None,
+        system_prompt: Optional[str] = None
+    ) -> Union[RAGResponse, str]:
         """
-        Simplified interface for querying that returns a text response.
+        Enhanced interface that uses LLM to generate a response from retrieved context.
+        
+        Args:
+            question: User's question
+            max_results: Maximum number of results to include in context
+            system_prompt: Optional custom system prompt for the LLM
+            
+        Returns:
+            RAGResponse containing answer, sources, and metadata
+        """
+        if max_results is None:
+            max_results = self.default_result_count
+            
+        logger.info(f"Processing RAG question: '{question}'")
+        
+        # First retrieve relevant context
+        retrieval_results = self.query(question, k=max_results)
+        context_items = retrieval_results["results"]
+        
+        # Generate response using LLM
+        response = self.llm_service.generate_response(
+            query=question,
+            context=context_items,
+            system_prompt=system_prompt
+        )
+        
+        logger.info(f"Generated response with {len(context_items)} context items")
+        return response
+    
+    def ask_with_text_response(self, question: str, max_results: int = None) -> str:
+        """
+        Simplified interface that returns a formatted text response.
         
         Args:
             question: User's question
             max_results: Maximum number of results to include
             
         Returns:
-            Formatted text response with results and sources
+            Formatted text response with answer and sources
         """
-        response = self.query(question, k=max_results)
+        response = self.ask(question, max_results=max_results)
         
         # Format as text
-        text_response = f"Query: {response['query']}\n\n"
-        text_response += f"Found {response['result_count']} relevant passages:\n\n"
-        
-        for i, result in enumerate(response["results"]):
-            text_response += f"[{i+1}] {result['text'][:200]}...\n"
-            if "metadata" in result:
-                meta = result["metadata"]
-                text_response += f"    Source: {meta.get('source', 'Unknown')}"
-                if meta.get('page'):
-                    text_response += f", Page: {meta.get('page')}"
-                text_response += "\n"
-            text_response += "\n"
+        text_response = f"Question: {question}\n\n"
+        text_response += f"Answer: {response.answer}\n\n"
         
         text_response += "Sources:\n"
-        for source in response["sources"]:
-            text_response += f"- {source.get('source', 'Unknown')}"
+        for i, source in enumerate(response.sources):
+            text_response += f"[{i+1}] "
+            
+            # Add title if available
             if source.get('title'):
-                text_response += f" ({source.get('title')})"
+                text_response += f"{source.get('title')}"
+            else:
+                text_response += f"Source {i+1}"
+                
+            # Add page if available
+            if source.get('page'):
+                text_response += f", Page {source.get('page')}"
+                
+            # Add file path if available
+            if source.get('source'):
+                text_response += f" (File: {source.get('source')})"
+                
             text_response += "\n"
         
         return text_response

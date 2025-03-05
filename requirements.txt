@@ -17,6 +17,13 @@ langchain-openai>=0.0.2
 # OpenAI
 openai>=1.0.0
 
+# UI/CLI
+rich>=13.0.0
+
+# Error Handling
+tenacity>=8.2.0
+
 # Utilities
 tqdm>=4.65.0
 python-dotenv>=1.0.0
+dataclasses-json>=0.5.7
