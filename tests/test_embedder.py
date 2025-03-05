@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from src.embedder import DocumentEmbedder
+from embedding.embedder import DocumentEmbedder
 from dotenv import load_dotenv
 
 # Load environment variables

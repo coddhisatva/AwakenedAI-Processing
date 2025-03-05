@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from src.chunker import SemanticChunker
+from processing.chunker import SemanticChunker
 from dotenv import load_dotenv
 
 # Load environment variables
