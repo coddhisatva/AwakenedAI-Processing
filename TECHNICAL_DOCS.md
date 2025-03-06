@@ -307,6 +307,8 @@ The LLM integration provides AI-generated responses based on retrieved context:
 - Implementation of progress tracking and resumable processing
 
 ## Documents Currently Processed:
-1. P. D. Ouspensky - The Fourth Way.pdf - A philosophical work on Gurdjieff's Fourth Way teaching
-2. The_Beginning_of_Infinity_-_David_Deutsch.pdf - A book on explanations and knowledge by physicist David Deutsch
-3. _Dr_Mark_Sircus_Transdermal_Magnesium_Therapy_A_New_Modality_for.pdf - A book about magnesium therapy
+1. Cure_Tooth_Decay_Remineralize_Cavities_and_Repair_Your_Teeth_Naturally.pdf
+2. How_to_Get_Rich_-_Felix_Dennis.pdf
+3. Niacin_The_Real_Story_Learn_about_the_Wonderful_Healing_Properties.pdf
+4. The-Book_of_five_rings_-_Kenji_tokitsu-Japanese-strategy.pdf
+5. _Dr_Mark_Sircus_Transdermal_Magnesium_Therapy_A_New_Modality_for.pdf

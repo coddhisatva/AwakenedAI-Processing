@@ -88,13 +88,31 @@ class DocumentExtractor:
                 if page_text:
                     text += page_text + "\n\n"
             
-            # Create metadata
+            # Extract document information from PDF metadata
+            pdf_info = reader.metadata
+            
+            # Create metadata with enhanced document information
             metadata = {
                 "filename": file_path.name,
                 "file_size": os.path.getsize(file_path),
                 "num_pages": num_pages,
                 "file_type": "pdf"
             }
+            
+            # Add PDF metadata if available
+            if pdf_info:
+                if pdf_info.title:
+                    metadata["title"] = pdf_info.title
+                if pdf_info.author:
+                    metadata["author"] = pdf_info.author
+                if pdf_info.subject:
+                    metadata["subject"] = pdf_info.subject
+                if pdf_info.creator:
+                    metadata["creator"] = pdf_info.creator
+                
+            # If no title in metadata, use filename without extension as title
+            if "title" not in metadata or not metadata["title"]:
+                metadata["title"] = file_path.stem
             
             # Save the extracted content and metadata
             if text:

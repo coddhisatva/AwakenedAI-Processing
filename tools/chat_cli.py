@@ -67,7 +67,7 @@ def setup_pipeline(model_name=None):
     )
     
     # Initialize LLM service with specified model or default
-    llm_service = LLMService(model_name=model_name or "gpt-3.5-turbo")
+    llm_service = LLMService(model_name=model_name or "gpt-4-turbo")
     
     # Initialize query engine
     query_engine = QueryEngine(
@@ -92,13 +92,18 @@ def display_response(response, show_sources=True):
         for i, source in enumerate(response.sources):
             source_text = f"[{i+1}] "
             
+            # Check for title, filename, or any other identifier in order of preference
             if source.get('title'):
                 source_text += source.get('title')
+            elif source.get('filename'):
+                source_text += source.get('filename')
             else:
                 source_text += f"Source {i+1}"
                 
             if source.get('page'):
                 source_text += f", Page {source.get('page')}"
+            elif source.get('num_pages'):
+                source_text += f" ({source.get('num_pages')} pages)"
                 
             console.print(Text(source_text, style="blue"))
     
@@ -155,7 +160,7 @@ def interactive_chat(query_engine):
 
 def main():
     parser = argparse.ArgumentParser(description="Chat with your document collection using LLM-powered responses")
-    parser.add_argument("--model", type=str, help="OpenAI model to use (default: gpt-3.5-turbo)")
+    parser.add_argument("--model", type=str, help="OpenAI model to use (default: gpt-4-turbo)")
     args = parser.parse_args()
     
     try:
