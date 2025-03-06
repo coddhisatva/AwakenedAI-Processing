@@ -1,8 +1,13 @@
 import logging
 import os
+import sys
 from pathlib import Path
 import json
 from dotenv import load_dotenv
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from src.storage.vector_store import SupabaseVectorStore
 
 # Load environment variables

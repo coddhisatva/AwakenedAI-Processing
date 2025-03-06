@@ -65,6 +65,42 @@ class DocumentEmbedder:
             "api_errors": 0
         }
     
+    def create_embedding(self, text: str) -> List[float]:
+        """
+        Generate embedding for a single text.
+        
+        Args:
+            text: Text to embed
+            
+        Returns:
+            Embedding as a list of floats
+        """
+        logger.info(f"Generating embedding for a single text (length: {len(text)})")
+        
+        # Try to generate embedding with retries
+        for attempt in range(self.max_retries):
+            try:
+                # Call OpenAI API to generate embedding
+                response = openai.embeddings.create(
+                    model=self.embedding_model,
+                    input=[text]
+                )
+                
+                # Extract embedding from response
+                embedding = response.data[0].embedding
+                
+                return embedding
+                
+            except Exception as e:
+                logger.warning(f"API error on attempt {attempt + 1}/{self.max_retries}: {str(e)}")
+                
+                if attempt < self.max_retries - 1:
+                    # Wait before retrying
+                    time.sleep(self.retry_delay * (attempt + 1))
+                else:
+                    # Max retries reached, re-raise the exception
+                    raise
+    
     def embed_documents(self, limit: Optional[int] = None) -> Dict[str, Any]:
         """
         Generate embeddings for all document chunks.

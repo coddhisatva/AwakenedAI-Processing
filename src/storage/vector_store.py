@@ -248,6 +248,40 @@ class SupabaseVectorStore(VectorStoreBase):
         
         document_ids = []
         
+        # Check if we need to generate embeddings
+        need_embeddings = False
+        for doc in documents:
+            if "embedding" not in doc or not doc["embedding"]:
+                need_embeddings = True
+                break
+        
+        # Generate embeddings if needed
+        if need_embeddings:
+            from src.embedding.embedder import DocumentEmbedder
+            import os
+            from pathlib import Path
+            
+            # Set up directories for the embedder
+            data_dir = Path(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"))
+            chunks_dir = data_dir / "chunks"
+            embeddings_dir = data_dir / "embeddings"
+            
+            # Create directories if they don't exist
+            chunks_dir.mkdir(exist_ok=True, parents=True)
+            embeddings_dir.mkdir(exist_ok=True, parents=True)
+            
+            # Initialize embedder
+            embedder = DocumentEmbedder(
+                chunks_dir=str(chunks_dir), 
+                embeddings_dir=str(embeddings_dir)
+            )
+            
+            # Create embeddings for each document without one
+            for doc in documents:
+                if "embedding" not in doc or not doc["embedding"]:
+                    content = doc.get("content", doc.get("text", ""))
+                    doc["embedding"] = embedder.create_embedding(content)
+        
         # Process each document
         for doc in documents:
             try:
@@ -302,12 +336,23 @@ class SupabaseVectorStore(VectorStoreBase):
             List of document dictionaries with text, metadata, and score
         """
         from src.embedding.embedder import DocumentEmbedder
+        import os
+        from pathlib import Path
         
         logger.info(f"Searching Supabase for: '{query}' with k={k}")
         
+        # Set up directories for the embedder
+        data_dir = Path(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"))
+        chunks_dir = data_dir / "chunks"
+        embeddings_dir = data_dir / "embeddings"
+        
+        # Create directories if they don't exist
+        chunks_dir.mkdir(exist_ok=True, parents=True)
+        embeddings_dir.mkdir(exist_ok=True, parents=True)
+        
         # Generate embedding for the query
-        embedder = DocumentEmbedder()
-        query_embedding = embedder.get_embedding(query)
+        embedder = DocumentEmbedder(chunks_dir=str(chunks_dir), embeddings_dir=str(embeddings_dir))
+        query_embedding = embedder.create_embedding(query)
         
         # Search using the query embedding
         results = self.adapter.search(query_embedding=query_embedding, limit=k)
