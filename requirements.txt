@@ -8,7 +8,11 @@ nltk>=3.8.1
 
 # Vector Database
 chromadb==0.4.15
-sentence-transformers>=2.2.2
+sentence-transformers==2.2.2
+torch>=2.0.0
+supabase>=2.13.0
+pgvector>=0.3.6
+psycopg-binary>=3.2.5
 
 # RAG Framework
 langchain>=0.0.267
@@ -22,6 +26,7 @@ rich>=13.0.0
 
 # Error Handling
 tenacity>=8.2.0
+sentry-sdk>=1.31.0
 
 # Utilities
 tqdm>=4.65.0
