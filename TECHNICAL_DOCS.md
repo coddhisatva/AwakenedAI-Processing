@@ -3,6 +3,30 @@
 ## Project Overview
 Awakened AI is a Retrieval-Augmented Generation (RAG) based knowledge system designed to process and synthesize information from a large collection of ebooks (10,000-15,000) in various formats (primarily PDFs). The system extracts text from these documents, processes it into semantic chunks, generates embeddings, stores them in a vector database, and provides a query interface for retrieving and synthesizing information.
 
+This repository contains the document processing pipeline, which is one component of the larger Awakened AI project.
+
+## Overall Project Architecture
+
+The Awakened AI project is structured as a multi-repository system:
+
+1. **Processing Repository** (Current Repository)
+   - Document extraction
+   - Semantic chunking
+   - Embedding generation
+   - Vector storage integration
+   - Basic query tools
+   
+2. **Web Application Repository** (Separate Repository)
+   - Frontend interface built with Next.js
+   - Query API
+   - User authentication
+   - Document management
+
+3. **Database** (Supabase-hosted PostgreSQL with pgvector)
+   - Vector storage
+   - Document metadata
+   - User data
+
 ## System Architecture
 
 ### 1. Data Processing Pipeline
@@ -19,6 +43,7 @@ Raw Documents → Text Extraction → Semantic Chunking → Embedding Generation
    - Extracts text from various document formats (PDF, EPUB, etc.)
    - Creates JSON files with extracted text and metadata
    - Currently implemented for PDF files using PyPDF2
+   - Extracts rich metadata (title, author, etc.) from document properties
 
 2. **Semantic Chunker** (`src/processing/chunker.py`)
    - Splits documents into semantic chunks for better retrieval
@@ -30,12 +55,13 @@ Raw Documents → Text Extraction → Semantic Chunking → Embedding Generation
    - Generates vector embeddings for each chunk using OpenAI's embedding models
    - Handles API rate limiting and retries
    - Stores embeddings with chunk metadata
+   - Supports single-text embedding for queries
 
 4. **Vector Database** (`src/storage/vector_store.py`)
    - Stores embeddings and metadata for efficient retrieval
    - Supports semantic search capabilities
-   - Currently implemented with ChromaDB
-   - Abstract interface allows for future backends (e.g., Pinecone)
+   - Implemented with Supabase's pgvector extension
+   - Abstract interface allows for different backends
 
 ### 2. RAG System
 
@@ -54,7 +80,7 @@ User Query → Query Processing → Vector Search → Context Retrieval → LLM 
    - Formats responses with source attribution
 
 2. **LLM Service** (`src/interface/llm.py`)
-   - Connects to OpenAI API
+   - Connects to OpenAI API with GPT-4 Turbo by default
    - Handles prompt construction with retrieved context
    - Manages API interactions with retry logic
    - Returns structured responses with metadata
@@ -73,8 +99,7 @@ AwakenedAI/
 │   ├── raw/                  # Raw document files (PDF, EPUB, etc.)
 │   ├── processed/            # Extracted text and metadata (JSON)
 │   ├── chunks/               # Semantic chunks (JSON)
-│   ├── embeddings/           # Generated embeddings (JSON)
-│   └── vector_db/            # Vector database storage
+│   └── embeddings/           # Generated embeddings (JSON)
 ├── src/
 │   ├── extraction/           # Document extraction modules
 │   │   └── extractor.py      # Document extraction implementation
@@ -90,16 +115,19 @@ AwakenedAI/
 │   ├── pipeline/             # Pipeline integration
 │   │   └── rag_pipeline.py   # RAG pipeline implementation
 │   └── retrieval/            # Vector search and retrieval modules
+├── database/
+│   └── supabase_adapter.py   # Supabase database adapter
 ├── tools/
 │   ├── process_sample.py     # Tool for processing sample documents
 │   ├── query_cli.py          # Basic query CLI tool
 │   ├── chat_cli.py           # Interactive chat interface
 │   ├── check_collection.py   # Tool for checking vector DB contents
-│   └── estimate_processing.py # Tool for estimating processing time
+│   └── show_sources.py       # Tool for displaying document sources
 ├── tests/
 │   ├── test_extractor.py     # Tests for document extraction
 │   ├── test_chunker.py       # Tests for semantic chunking
 │   ├── test_embedder.py      # Tests for embedding generation
+│   ├── test_vector_store.py  # Tests for vector store integration
 │   └── test_llm_integration.py # Tests for LLM integration
 ├── requirements.txt          # Project dependencies
 ├── .env                      # Environment variables and configuration
@@ -126,8 +154,8 @@ AwakenedAI/
 
 4. **Vector Database Storage**:
    - Input: Embeddings and metadata from `data/embeddings/`
-   - Process: Store in ChromaDB vector database with metadata
-   - Output: Searchable vector database in `data/vector_db/`
+   - Process: Store in Supabase with pgvector extension
+   - Output: Searchable vector database in Supabase
 
 5. **Query Processing**:
    - Input: User query
@@ -148,7 +176,8 @@ The `DocumentExtractor` class handles the extraction of text from various docume
 - Initialization with raw and processed directories
 - Method to extract text from PDF files using PyPDF2
 - Error handling for encrypted or problematic PDFs
-- Metadata extraction (filename, file size, number of pages)
+- Rich metadata extraction (title, author, subject, creator)
+- Fallback to filename as title when metadata is missing
 - JSON output with extracted text and metadata
 
 ### Semantic Chunker (`src/processing/chunker.py`)
@@ -168,16 +197,27 @@ The `DocumentEmbedder` class handles the generation of embeddings:
 - Initialization with chunks and embeddings directories
 - Configuration for embedding model and batch size
 - API rate limiting and retry logic
+- Support for both batch embedding and single-text embedding
 - JSON output with embeddings and metadata
 
 ### Vector Store (`src/storage/vector_store.py`)
 
-The `ChromaVectorStore` class handles vector database operations:
+The `SupabaseVectorStore` class handles vector database operations:
 
-- Initialization with persist directory and collection name
+- Connection to Supabase using the adapter
 - Methods for adding documents with embeddings
+- Generation of embeddings for documents when not provided
 - Search functionality with metadata filtering
 - Implementation of abstract `VectorStoreBase` interface
+
+### Supabase Adapter (`database/supabase_adapter.py`)
+
+The `SupabaseAdapter` class handles direct interactions with Supabase:
+
+- Connection to Supabase using provided credentials
+- Document and chunk storage in separate tables
+- Vector similarity search using pgvector
+- Document metadata management
 
 ### Query Engine (`src/interface/query.py`)
 
@@ -192,7 +232,7 @@ The `QueryEngine` class provides the interface for querying the system:
 
 The `LLMService` class handles interactions with the language model:
 
-- Initialization with model parameters
+- Initialization with GPT-4 Turbo as the default model
 - Response generation from context and query
 - Retry logic for API resilience
 - Structured response format with source attribution
@@ -202,11 +242,12 @@ The `LLMService` class handles interactions with the language model:
 The project uses environment variables for configuration, stored in the `.env` file:
 
 - `OPENAI_API_KEY`: API key for OpenAI services
-- `COLLECTION_NAME`: Name of the vector database collection
+- `SUPABASE_URL`: URL for the Supabase project
+- `SUPABASE_KEY`: API key for Supabase
 - `CHUNK_SIZE`: Target size of each chunk in characters
 - `CHUNK_OVERLAP`: Overlap between chunks in characters
 - `EMBEDDING_MODEL`: OpenAI embedding model to use
-- `LLM_MODEL`: OpenAI model for response generation (e.g., "gpt-3.5-turbo")
+- `LLM_MODEL`: OpenAI model for response generation (default: "gpt-4-turbo")
 - `LLM_TEMPERATURE`: Temperature parameter for LLM responses
 
 ## Testing
@@ -216,46 +257,33 @@ Each component has a corresponding test script:
 - `test_extractor.py`: Tests the document extraction functionality
 - `test_chunker.py`: Tests the semantic chunking functionality
 - `test_embedder.py`: Tests the embedding generation
+- `test_vector_store.py`: Tests the Supabase vector store implementation
 - `test_llm_integration.py`: Tests the LLM response generation
 
 ## Vector Database Implementation
 
-After evaluating various vector database options, the following decision has been made:
+The project has migrated from ChromaDB to Supabase with pgvector:
 
-- **Production Target**: Pinecone (cloud-based managed service)
-- **Development Environment**: Chroma (local, self-hosted)
-- **Migration Strategy**: Abstraction layer to support both backends
+### Supabase with pgvector
 
-### Development Approach:
+- PostgreSQL database with pgvector extension
+- Managed cloud service for vector storage
+- Tables for documents and chunks with metadata
+- Vector similarity search using pgvector
 
-1. **Local Development with Chroma**
-   - Free, open-source vector database for initial development
-   - Similar API to cloud solutions for easier migration
-   - Will be used during the development and testing phases
+### Benefits of Supabase Implementation:
 
-2. **Abstraction Layer**
-   - Implementation of a database interface that works with multiple vector DB backends
-   - Adapters for both Chroma and Pinecone
-   - Ensures seamless migration from development to production
+1. **Scalability**
+   - Cloud-hosted solution that can scale with the project
+   - Handles the planned 10,000-15,000 documents efficiently
 
-3. **Testing Strategy**
-   - Initial testing with a subset of 100-500 books
-   - Validation of core RAG functionality
-   - Performance testing and parameter optimization
+2. **Integration**
+   - Works well with the planned web application
+   - Provides authentication and other services needed for the full project
 
-4. **Production Deployment**
-   - Migration to Pinecone when ready for full-scale deployment
-   - Strategic use of Pinecone trial during final testing phase
-   - Export of vectors from development environment to production
-   - Scaling to handle the full 10,000-15,000 book collection
-
-### Vector Database Interface Implementation
-
-The `VectorStoreBase` interface provides:
-- Abstract methods for adding documents/embeddings
-- Query methods for similarity search
-- Metadata filtering capabilities
-- Implementation for ChromaDB (Pinecone to be added)
+3. **Cost-Effectiveness**
+   - Reasonable pricing for the scale of the project
+   - Predictable cost structure
 
 ## LLM Integration
 
@@ -282,29 +310,44 @@ The LLM integration provides AI-generated responses based on retrieved context:
 4. **Source Attribution**:
    - Extracts metadata from retrieved chunks
    - Associates responses with source documents
-   - Formats citations with available metadata
+   - Formats citations with available metadata (title, author, etc.)
 
 ## Current Status
 
 - ✅ Document extraction is implemented and fully tested for PDF files
 - ✅ Semantic chunking is implemented and fully tested
 - ✅ Embedding generation is implemented and fully tested
-- ✅ Vector database implementation with ChromaDB is complete and tested
+- ✅ Migration from ChromaDB to Supabase is complete
+- ✅ Vector database implementation with Supabase is complete and tested
 - ✅ End-to-end pipeline is functional and verified:
   - Successfully processed multiple documents through the entire pipeline
-  - Extracted text from PDFs, generated semantic chunks, created embeddings, and stored in ChromaDB
-  - Processed 3 documents into 1583 chunks
+  - Extracted text from PDFs, generated semantic chunks, created embeddings, and stored in Supabase
+- ✅ Enhanced metadata extraction implemented:
+  - Extracts title, author, and other document properties from PDFs
+  - Fallback to filename when metadata is missing
 - ✅ LLM integration is implemented and tested:
+  - Upgraded to GPT-4 Turbo as the default model
   - Connected to OpenAI API for response generation
   - Created interactive chat interface
-  - Implemented source attribution
+  - Implemented enhanced source attribution with document titles
 
 ## Scaling Considerations
 
-- Current processing rate suggests ~13 hours to process remaining 30 documents (158.93 MB)
-- 7 of 33 documents are EPUBs, which are not yet supported
-- Need for parallel processing to improve throughput
-- Implementation of progress tracking and resumable processing
+- Implementation of EPUB support for remaining document types
+- Parallel processing for improved throughput
+- Incremental processing of the full document collection
+- Integration with the web application (future repository)
+- Monitoring and optimization of vector storage
+
+## Web Application Future Development
+
+The web application will be developed in a separate repository with:
+
+- Next.js frontend with TypeScript and Tailwind CSS
+- React components using Shadcn UI
+- User authentication via Supabase Auth
+- API routes for document querying and management
+- Integration with this processing pipeline
 
 ## Documents Currently Processed:
 1. Cure_Tooth_Decay_Remineralize_Cavities_and_Repair_Your_Teeth_Naturally.pdf

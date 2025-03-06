@@ -34,3 +34,18 @@
 - Built interactive chat CLI
 - Tested LLM integration functionality
 - Analyzed scaling requirements for full document collection
+
+## Day 4 - Project Restructuring and Database Migration
+**Date:** [Current Date]
+
+### Completed
+- Designed restructuring of the project
+  - Split into multi-repository architecture (Processing, Web Application, Database)
+  - Processing repository focuses on document pipeline
+  - Web Application repository will use Next.js, React, TypeScript
+  - Centralized Supabase database for both repositories
+- Switched from ChromaDB to pgVector with Supabase
+- Enhanced metadata collection, including title, author, subject, and creator from PDF properties
+- Improved source attribution in chat responses with proper document titles
+- Upgraded default LLM from GPT-3.5 Turbo to GPT-4 Turbo
+- Implemented single-text embedding functionality for improved query handling
