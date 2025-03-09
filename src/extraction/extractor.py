@@ -88,21 +88,38 @@ class DocumentExtractor:
         logger.info(f"EPUB: {self.stats['by_type']['epub']['processed']} processed, {self.stats['by_type']['epub']['failed']} failed, {self.stats['by_type']['epub']['skipped']} skipped")
         return self.stats
     
-    def extract_pdf(self, file_path: Path) -> None:
+    def extract_pdf(self, file_path: Path) -> Dict[str, Any]:
         """
         Extract text from a PDF file and save to the processed directory.
         
         Args:
             file_path: Path to the PDF file
+            
+        Returns:
+            Dictionary with extracted text and metadata, or None if extraction fails
         """
-        # Check if this file has already been processed
+        # Check if this file has already been extracted
         output_path = self.processed_dir / f"{file_path.stem}.json"
         if output_path.exists():
-            logger.info(f"Skipping already extracted file: {file_path.name}")
+            logger.info(f"File already extracted, loading existing content: {file_path.name}")
             self.stats["skipped"] += 1
             self.stats["by_type"]["pdf"]["skipped"] += 1
-            return
-        
+            # Load and return the already extracted content
+            try:
+                with open(output_path, 'r') as f:
+                    saved_doc = json.load(f)
+                    # Convert to the format expected by the pipeline
+                    return {
+                        "text": saved_doc["content"],
+                        "source": file_path.name,
+                        "title": saved_doc["metadata"].get("title", file_path.stem),
+                        "page": None,
+                        "chapter": None
+                    }
+            except Exception as e:
+                logger.error(f"Error loading previously extracted file {output_path}: {e}")
+                return None
+            
         # First try regular PDF extraction
         try:
             # Extract text using PyPDF2
@@ -158,7 +175,14 @@ class DocumentExtractor:
                     self._save_processed_document(output_path, text, metadata)
                     self.stats["successful"] += 1
                     self.stats["by_type"]["pdf"]["processed"] += 1
-                    return
+                    # Return in the format expected by the pipeline
+                    return {
+                        "text": text,
+                        "source": file_path.name,
+                        "title": metadata.get("title", file_path.stem),
+                        "page": None,
+                        "chapter": None
+                    }
                 
                 logger.info(f"No text extracted with PyPDF2 for {file_path.name}, attempting OCR")
             
@@ -205,8 +229,14 @@ class DocumentExtractor:
                     self._save_processed_document(output_path, text, metadata)
                     self.stats["successful"] += 1
                     self.stats["by_type"]["pdf"]["processed"] += 1
-                    logger.info(f"Successfully extracted text with OCR for {file_path.name}")
-                    return
+                    # Return in the format expected by the pipeline
+                    return {
+                        "text": text,
+                        "source": file_path.name,
+                        "title": metadata.get("title", file_path.stem),
+                        "page": None,
+                        "chapter": None
+                    }
                 else:
                     logger.warning(f"No text extracted from {file_path} even after OCR")
                     raise ValueError(f"No text extracted from {file_path} even after OCR")
@@ -219,75 +249,105 @@ class DocumentExtractor:
             logger.error(f"Error processing PDF {file_path}: {str(e)}")
             raise
     
-    def extract_epub(self, file_path: Path) -> None:
+    def extract_epub(self, file_path: Path) -> Dict[str, Any]:
         """
         Extract text from an EPUB file and save to the processed directory.
         
         Args:
             file_path: Path to the EPUB file
+            
+        Returns:
+            Dictionary with extracted text and metadata, or None if extraction fails
         """
-        # Check if this file has already been processed
+        # Check if this file has already been extracted
         output_path = self.processed_dir / f"{file_path.stem}.json"
         if output_path.exists():
-            logger.info(f"Skipping already extracted file: {file_path.name}")
+            logger.info(f"File already extracted, loading existing content: {file_path.name}")
             self.stats["skipped"] += 1
             self.stats["by_type"]["epub"]["skipped"] += 1
-            return
+            # Load and return the already extracted content
+            try:
+                with open(output_path, 'r') as f:
+                    saved_doc = json.load(f)
+                    # Convert to the format expected by the pipeline
+                    return {
+                        "text": saved_doc["content"],
+                        "source": file_path.name,
+                        "title": saved_doc["metadata"].get("title", file_path.stem),
+                        "page": None,
+                        "chapter": None
+                    }
+            except Exception as e:
+                logger.error(f"Error loading previously extracted file {output_path}: {e}")
+                return None
             
-        # Load the EPUB file
-        book = epub.read_epub(str(file_path))
+        # Extract text from EPUB
+        try:
+            book = epub.read_epub(file_path)
+            
+            # Extract text from all HTML items
+            text = ""
+            chapter_count = 0
+            
+            # Helper function to extract text from HTML content
+            def chapter_to_text(content):
+                soup = BeautifulSoup(content, 'html.parser')
+                return soup.get_text(' ', strip=True)
+            
+            # Process each document item
+            for item in book.get_items():
+                if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                    chapter_text = chapter_to_text(item.get_content())
+                    if chapter_text:
+                        text += chapter_text + "\n\n"
+                        chapter_count += 1
+            
+            # Create metadata with available EPUB information
+            metadata = {
+                "filename": file_path.name,
+                "file_size": os.path.getsize(file_path),
+                "num_chapters": chapter_count,
+                "file_type": "epub"
+            }
+            
+            # Extract metadata from the EPUB
+            if book.get_metadata('DC', 'title'):
+                metadata["title"] = book.get_metadata('DC', 'title')[0][0]
+            if book.get_metadata('DC', 'creator'):
+                metadata["author"] = book.get_metadata('DC', 'creator')[0][0]
+            if book.get_metadata('DC', 'description'):
+                metadata["description"] = book.get_metadata('DC', 'description')[0][0]
+            if book.get_metadata('DC', 'publisher'):
+                metadata["publisher"] = book.get_metadata('DC', 'publisher')[0][0]
+            if book.get_metadata('DC', 'date'):
+                metadata["date"] = book.get_metadata('DC', 'date')[0][0]
+            if book.get_metadata('DC', 'language'):
+                metadata["language"] = book.get_metadata('DC', 'language')[0][0]
+            
+            # If no title in metadata, use filename without extension as title
+            if "title" not in metadata or not metadata["title"]:
+                metadata["title"] = file_path.stem
+            
+            # Save the extracted content and metadata
+            if text:
+                self._save_processed_document(output_path, text, metadata)
+                self.stats["successful"] += 1
+                self.stats["by_type"]["epub"]["processed"] += 1
+                # Return in the format expected by the pipeline
+                return {
+                    "text": text,
+                    "source": file_path.name,
+                    "title": metadata.get("title", file_path.stem),
+                    "page": None,
+                    "chapter": None
+                }
+            else:
+                logger.warning(f"No text extracted from {file_path}")
+                raise ValueError(f"No text extracted from {file_path}")
         
-        # Extract text from all HTML items
-        text = ""
-        chapter_count = 0
-        
-        # Helper function to extract text from HTML content
-        def chapter_to_text(content):
-            soup = BeautifulSoup(content, 'html.parser')
-            return soup.get_text(' ', strip=True)
-        
-        # Process each document item
-        for item in book.get_items():
-            if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                chapter_text = chapter_to_text(item.get_content())
-                if chapter_text:
-                    text += chapter_text + "\n\n"
-                    chapter_count += 1
-        
-        # Create metadata with available EPUB information
-        metadata = {
-            "filename": file_path.name,
-            "file_size": os.path.getsize(file_path),
-            "num_chapters": chapter_count,
-            "file_type": "epub"
-        }
-        
-        # Extract metadata from the EPUB
-        if book.get_metadata('DC', 'title'):
-            metadata["title"] = book.get_metadata('DC', 'title')[0][0]
-        if book.get_metadata('DC', 'creator'):
-            metadata["author"] = book.get_metadata('DC', 'creator')[0][0]
-        if book.get_metadata('DC', 'description'):
-            metadata["description"] = book.get_metadata('DC', 'description')[0][0]
-        if book.get_metadata('DC', 'publisher'):
-            metadata["publisher"] = book.get_metadata('DC', 'publisher')[0][0]
-        if book.get_metadata('DC', 'date'):
-            metadata["date"] = book.get_metadata('DC', 'date')[0][0]
-        if book.get_metadata('DC', 'language'):
-            metadata["language"] = book.get_metadata('DC', 'language')[0][0]
-        
-        # If no title in metadata, use filename without extension as title
-        if "title" not in metadata or not metadata["title"]:
-            metadata["title"] = file_path.stem
-        
-        # Save the extracted content and metadata
-        if text:
-            self._save_processed_document(output_path, text, metadata)
-            self.stats["successful"] += 1
-            self.stats["by_type"]["epub"]["processed"] += 1
-        else:
-            logger.warning(f"No text extracted from {file_path}")
-            raise ValueError(f"No text extracted from {file_path}")
+        except Exception as e:
+            logger.error(f"Error processing EPUB {file_path}: {str(e)}")
+            raise
     
     def _save_processed_document(self, output_path: Path, content: str, metadata: Dict[str, Any]) -> None:
         """
