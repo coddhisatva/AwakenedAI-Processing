@@ -55,14 +55,10 @@
 - PDFs that need OCR can be extracted and therefore processed
 - skip already extracted documents when extracting
 - automatic list of files that are in the db created upon adding files to the db (or not needing too bc it would be a dupe) ((validated))
-
-- filenames in db checked before insertion to prevent dupes in db -- didn't work
+- filenames in db/manifest checked before insertion to prevent dupes in db -- manifest tested
 - processing process yields stats about timing and performance, other stats
 - ran process, haven't investigated yet; stuff looks weird, but:
-  - 33/33 og files should be in the database and available now (not)
-  - need to check db, and verify prod version has access
 
-- Okay it only ran extraction not the rest
-- fixing this by consolidating to just rag pipeline file
-
-- Next thing to do is run rag_pipeline.py file, and see if insertion into db works
+## Day 8
+- Fixed some stuff; 31/33 documents (non-ocr) now succesfully in the db
+  - Need to batch them at embedding and storage so it doesn't take hours
