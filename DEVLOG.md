@@ -59,8 +59,10 @@
 - filenames in db checked before insertion to prevent dupes in db -- didn't work
 - processing process yields stats about timing and performance, other stats
 - ran process, haven't investigated yet; stuff looks weird, but:
-  - 33/33 og files should be in the database and available now
+  - 33/33 og files should be in the database and available now (not)
   - need to check db, and verify prod version has access
 
 - Okay it only ran extraction not the rest
 - fixing this by consolidating to just rag pipeline file
+
+- Next thing to do is run rag_pipeline.py file, and see if insertion into db works

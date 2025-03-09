@@ -147,71 +147,78 @@ Our production processing implementation uses a multi-level filtering approach t
 
 ### Implementation Tools
 
-1. **Production Processing Tool** (`tools/process_all.py`)
+1. **RAGPipeline CLI** (`src/pipeline/rag_pipeline.py`)
    - Implements the optimized multi-level filtering approach
    - Processes the entire document collection efficiently
    - Maintains a comprehensive manifest of all documents
+   - Handles both regular processing and OCR-specific processing
    - Command-line options for controlling processing behavior:
      * `--force_reprocess`: Process all files regardless of manifest or database status
      * `--update_manifest_only`: Only update the manifest with database files, skip processing
+     * `--skip_ocr`: Skip files that need OCR processing
      * `--batch_size`: Control processing batch size for memory management
      * `--extensions`: Specify which file types to process
 
 ## Pipeline Implementations and Tools
 
-The project has two distinct implementations of the document processing pipeline, each serving different purposes:
+The project has a consolidated implementation of the document processing pipeline:
 
-### 1. RAGPipeline Class (`src/pipeline/rag_pipeline.py`)
+### RAGPipeline Class (`src/pipeline/rag_pipeline.py`)
 
 **Purpose:** Core pipeline implementation designed for production-scale processing and querying.
 
 **Features:**
 - In-memory processing approach for efficiency
 - Handles the entire document processing flow (extraction → chunking → embedding → storage)
+- Intelligent document filtering with manifest and database checks
+- OCR file handling with skip option
+- Performance statistics and timing information
 - Provides a query interface for retrieving documents
+- Includes command-line interface directly in the class
 - Optimized for processing large document collections (thousands of files)
 
 **Usage:**
+- Can be run directly as a command-line tool:
+  ```bash
+  python -m src.pipeline.rag_pipeline --skip_ocr
+  ```
 - Used by query tools (query_cli.py, chat_cli.py) for retrieving documents
-- Should be used for full-scale processing of the entire document collection
-- Not directly exposed through a CLI tool for processing
+- Handles the full production-scale processing of the entire document collection
 
-### 2. Process Sample Tool (`tools/process_sample.py`)
+**CLI Options:**
+- `--input_dir`: Directory containing documents to process (default: data/raw)
+- `--batch_size`: Number of documents to process in each batch (default: 5)
+- `--extensions`: File extensions to include (default: pdf epub txt)
+- `--force_reprocess`: Process all files even if they are in the manifest or database
+- `--update_manifest_only`: Only update the manifest with files found in the database, don't process files
+- `--skip_ocr`: Skip files that need OCR processing
+- `--manifest_path`: Path to the manifest file (default: data/processed_documents.json)
 
-**Purpose:** Testing and development tool for processing small batches of documents.
+### When to Use RAGPipeline:
 
-**Features:**
-- File-based approach with intermediate JSON files for easy inspection
-- Command-line options for controlling processing (file count, specific files, extensions)
-- Support for random sampling of documents
-- Detailed logging and statistics
-- Designed for smaller-scale testing and validation
-
-**Usage:**
-- Use during development and testing
-- Process small document samples to verify pipeline functionality
-- Test new document types or processing features
-- NOT intended for processing the complete document collection
-
-### When to Use Each Implementation:
-
-1. **For testing with small batches (5-10 documents):**
-   - Use `process_sample.py` with appropriate options
-   - Example: `python tools/process_sample.py --count 5 --extensions pdf epub`
+1. **For processing the entire document collection:**
+   - Run directly: `python -m src.pipeline.rag_pipeline`
+   - With OCR skipping: `python -m src.pipeline.rag_pipeline --skip_ocr`
 
 2. **For querying the system:**
-   - Use `query_cli.py` or `chat_cli.py`
+   - Use `query_cli.py` or `chat_cli.py` 
    - These tools use the RAGPipeline implementation for retrieval
 
-3. **For full-scale processing (thousands of documents):**
-   - Currently, there is no dedicated CLI tool for this
-   - A new tool based on RAGPipeline.process_directory should be created for this purpose
+### Optimized Two-Phase Processing Approach
 
-### Future Development:
+Our RAGPipeline now supports a two-phase approach for handling both regular documents and those requiring OCR:
 
-**Planned Tools:**
-- Create `process_collection.py` that uses RAGPipeline.process_directory for full-scale processing
-- This tool will leverage the more efficient in-memory processing approach of RAGPipeline for handling the entire document collection
+1. **Phase 1: Regular Document Processing**
+   - Process all regular documents with `--skip_ocr` flag
+   - Run: `python -m src.pipeline.rag_pipeline --skip_ocr`
+   - This processes all documents except those identified as needing OCR
+
+2. **Phase 2: OCR-Intensive Processing**
+   - Process only OCR-requiring files as a separate run
+   - The files previously skipped will be processed with OCR
+   - This approach allows scheduling intensive OCR processing when resources are available
+
+This consolidated architecture ensures a clean implementation with all functionality in a single class, preventing divergent code paths and potential bugs.
 
 ## Directory Structure
 
@@ -245,6 +252,7 @@ AwakenedAI/
 │   ├── chat_cli.py           # Interactive chat interface (uses RAGPipeline)
 │   ├── check_collection.py   # Tool for checking vector DB contents
 │   └── show_sources.py       # Tool for displaying document sources
+├── sql_queries/              # SQL queries for database operations and analysis
 ├── tests/
 │   ├── test_extractor.py     # Tests for document extraction
 │   ├── test_chunker.py       # Tests for semantic chunking
@@ -545,9 +553,11 @@ The LLM integration provides AI-generated responses based on retrieved context:
   - Connected to OpenAI API for response generation
   - Created interactive chat interface
   - Implemented enhanced source attribution with document titles
-- ⏳ Two-phase processing for production-scale document collection:
-  - Proposed approach for efficiently handling regular and OCR-intensive documents
-  - To be implemented in the RAGPipeline for production use
+- ✅ Two-phase processing for production-scale document collection:
+  - Implemented approach for efficiently handling regular and OCR-intensive documents
+  - Consolidated all functionality into the RAGPipeline class
+  - Added direct CLI functionality to the RAGPipeline
+  - Added OCR skipping with `--skip_ocr` flag
 
 ## Scaling Considerations
 
