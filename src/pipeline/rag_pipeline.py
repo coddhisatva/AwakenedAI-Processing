@@ -448,9 +448,11 @@ class RAGPipeline:
                 if force_reprocess:
                     logger.info(f"Force reprocessing {len(all_files)} files")
                     
-                    # Process all files directory
-                    extracted_docs = self.extractor.extract_directory(str(input_dir))
-                    total_chunks = self._process_extracted_docs(extracted_docs, batch_size)
+                    # Get list of all file paths as strings
+                    all_file_paths = [str(f) for f in all_files]
+                    
+                    # Process files directly
+                    total_chunks = self.process_files(all_file_paths, batch_size)
                     
                     self.stats["total_chunks"] = total_chunks
                     self.stats["successful_files"] = len(all_files)
@@ -478,8 +480,11 @@ class RAGPipeline:
                         
                         # Process all files in the temporary directory
                         try:
-                            extracted_docs = self.extractor.extract_directory(str(temp_path))
-                            total_chunks = self._process_extracted_docs(extracted_docs, batch_size)
+                            # Get the file paths in the temp directory
+                            temp_file_paths = [str(f) for f in temp_path.glob("*.*")]
+                            
+                            # Process the files
+                            total_chunks = self.process_files(temp_file_paths, batch_size)
                             successful_files = new_files
                             self.stats["total_chunks"] = total_chunks
                         except Exception as e:
