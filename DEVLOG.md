@@ -52,3 +52,4 @@
 
 ## Day 7
 - EPUB implementation
+- PDFs that need OCR can be processed

@@ -1,0 +1,1 @@
+import PyPDF2; file_path="data/raw/Frank Rudolph Young - Cyclomancy - The Secret of Psychic Power Control.pdf"; pdf = PyPDF2.PdfReader(file_path); text = pdf.pages[0].extract_text(); print(f"Text extract success: {bool(text)}"); print(f"Text length: {len(text) if text else 0}"); print(f"Sample: {text[:200] if text else \"No text found\"}");

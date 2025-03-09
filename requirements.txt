@@ -5,6 +5,7 @@ pdfminer.six>=20221105
 ebooklib>=0.18.0
 beautifulsoup4>=4.12.0
 nltk>=3.8.1
+ocrmypdf>=15.0.0
 
 # Vector Database
 chromadb==0.4.15

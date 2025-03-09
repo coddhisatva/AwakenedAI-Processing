@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import tempfile
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, List
 import datetime
@@ -35,7 +37,7 @@ class DocumentExtractor:
             "successful": 0,
             "failed": 0,
             "by_type": {
-                "pdf": {"processed": 0, "failed": 0},
+                "pdf": {"processed": 0, "failed": 0, "ocr_applied": 0},
                 "epub": {"processed": 0, "failed": 0}
             }
         }
@@ -84,71 +86,130 @@ class DocumentExtractor:
                 logger.error(f"Failed to process EPUB {file_path}: {str(e)}")
         
         logger.info(f"Extraction complete. Processed {self.stats['successful']} files successfully, {self.stats['failed']} failed.")
-        logger.info(f"PDF: {self.stats['by_type']['pdf']['processed']} processed, {self.stats['by_type']['pdf']['failed']} failed")
+        logger.info(f"PDF: {self.stats['by_type']['pdf']['processed']} processed, {self.stats['by_type']['pdf']['failed']} failed, {self.stats['by_type']['pdf']['ocr_applied']} required OCR")
         logger.info(f"EPUB: {self.stats['by_type']['epub']['processed']} processed, {self.stats['by_type']['epub']['failed']} failed")
         return self.stats
     
     def _process_pdf(self, file_path: Path) -> None:
         """
-        Process a single PDF file.
+        Process a single PDF file, using OCR if regular extraction fails.
         
         Args:
             file_path: Path to the PDF file
         """
-        # Extract text using PyPDF2
-        with open(file_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
-            
-            # Check if PDF is encrypted
-            if reader.is_encrypted:
-                try:
-                    reader.decrypt('')  # Try empty password
-                except:
-                    logger.error(f"Cannot decrypt PDF: {file_path}")
-                    raise ValueError(f"Encrypted PDF: {file_path}")
-            
-            # Extract text from all pages
-            num_pages = len(reader.pages)
-            text = ""
-            
-            for i, page in enumerate(reader.pages):
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n\n"
-            
-            # Extract document information from PDF metadata
-            pdf_info = reader.metadata
-            
-            # Create metadata with enhanced document information
-            metadata = {
-                "filename": file_path.name,
-                "file_size": os.path.getsize(file_path),
-                "num_pages": num_pages,
-                "file_type": "pdf"
-            }
-            
-            # Add PDF metadata if available
-            if pdf_info:
-                if pdf_info.title:
-                    metadata["title"] = pdf_info.title
-                if pdf_info.author:
-                    metadata["author"] = pdf_info.author
-                if pdf_info.subject:
-                    metadata["subject"] = pdf_info.subject
-                if pdf_info.creator:
-                    metadata["creator"] = pdf_info.creator
+        # First try regular PDF extraction
+        try:
+            # Extract text using PyPDF2
+            with open(file_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
                 
-            # If no title in metadata, use filename without extension as title
-            if "title" not in metadata or not metadata["title"]:
-                metadata["title"] = file_path.stem
+                # Check if PDF is encrypted
+                if reader.is_encrypted:
+                    try:
+                        reader.decrypt('')  # Try empty password
+                    except:
+                        logger.error(f"Cannot decrypt PDF: {file_path}")
+                        raise ValueError(f"Encrypted PDF: {file_path}")
+                
+                # Extract text from all pages
+                num_pages = len(reader.pages)
+                text = ""
+                
+                for i, page in enumerate(reader.pages):
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n\n"
+                
+                # Extract document information from PDF metadata
+                pdf_info = reader.metadata
+                
+                # Create metadata with enhanced document information
+                metadata = {
+                    "filename": file_path.name,
+                    "file_size": os.path.getsize(file_path),
+                    "num_pages": num_pages,
+                    "file_type": "pdf",
+                    "ocr_applied": False
+                }
+                
+                # Add PDF metadata if available
+                if pdf_info:
+                    if pdf_info.title:
+                        metadata["title"] = pdf_info.title
+                    if pdf_info.author:
+                        metadata["author"] = pdf_info.author
+                    if pdf_info.subject:
+                        metadata["subject"] = pdf_info.subject
+                    if pdf_info.creator:
+                        metadata["creator"] = pdf_info.creator
+                
+                # If no title in metadata, use filename without extension as title
+                if "title" not in metadata or not metadata["title"]:
+                    metadata["title"] = file_path.stem
+                
+                # If text was extracted, save it
+                if text.strip():
+                    output_path = self.processed_dir / f"{file_path.stem}.json"
+                    self._save_processed_document(output_path, text, metadata)
+                    return
+                
+                logger.info(f"No text extracted with PyPDF2 for {file_path.name}, attempting OCR")
             
-            # Save the extracted content and metadata
-            if text:
-                output_path = self.processed_dir / f"{file_path.stem}.json"
-                self._save_processed_document(output_path, text, metadata)
-            else:
-                logger.warning(f"No text extracted from {file_path}")
-                raise ValueError(f"No text extracted from {file_path}")
+            # If no text was extracted, try OCR
+            try:
+                # Create a temporary file for OCR output
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
+                    temp_output_path = temp_file.name
+                
+                # Use OCRmyPDF to add text layer to the PDF
+                try:
+                    import ocrmypdf
+                    ocrmypdf.ocr(
+                        input_file=str(file_path),
+                        output_file=temp_output_path,
+                        skip_text=True,  # Skip pages that already have text
+                        deskew=True,     # Straighten pages
+                        force_ocr=False  # Only apply OCR where needed
+                    )
+                except ImportError:
+                    # If ocrmypdf is not available as a module, try command line
+                    cmd = ['ocrmypdf', '--skip-text', '--deskew', str(file_path), temp_output_path]
+                    subprocess.run(cmd, check=True)
+                
+                # Extract text from the OCR'd PDF
+                with open(temp_output_path, 'rb') as file:
+                    reader = PyPDF2.PdfReader(file)
+                    text = ""
+                    
+                    for page in reader.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n\n"
+                
+                # Update metadata to indicate OCR was applied
+                metadata["ocr_applied"] = True
+                self.stats["by_type"]["pdf"]["ocr_applied"] += 1
+                
+                # Delete the temporary file
+                os.unlink(temp_output_path)
+                
+                # Save the extracted content and metadata
+                if text.strip():
+                    output_path = self.processed_dir / f"{file_path.stem}.json"
+                    self._save_processed_document(output_path, text, metadata)
+                    logger.info(f"Successfully extracted text with OCR for {file_path.name}")
+                    return
+                else:
+                    logger.warning(f"No text extracted from {file_path} even after OCR")
+                    raise ValueError(f"No text extracted from {file_path} even after OCR")
+                
+            except Exception as ocr_e:
+                logger.error(f"OCR processing failed for {file_path}: {str(ocr_e)}")
+                raise ValueError(f"Failed to extract text from {file_path}, OCR error: {str(ocr_e)}")
+        
+        except Exception as e:
+            logger.error(f"Error processing PDF {file_path}: {str(e)}")
+            raise
     
     def _process_epub(self, file_path: Path) -> None:
         """
