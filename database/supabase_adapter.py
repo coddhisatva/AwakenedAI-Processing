@@ -104,6 +104,13 @@ class SupabaseAdapter:
             return response.data[0]
         return None
     
+    def get_document_by_filepath(self, filepath: str) -> Optional[Dict[str, Any]]:
+        """Get a document by its filepath."""
+        response = self.supabase.table("documents").select("*").eq("filepath", filepath).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    
     def get_chunk_by_id(self, chunk_id: str) -> Optional[Dict[str, Any]]:
         """Get a chunk by its ID."""
         response = self.supabase.table("chunks").select("*").eq("id", chunk_id).execute()

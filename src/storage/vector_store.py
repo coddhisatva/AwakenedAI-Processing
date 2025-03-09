@@ -296,8 +296,12 @@ class SupabaseVectorStore(VectorStoreBase):
                 filepath = metadata.get("source", "")
                 
                 # Check if we already have this document based on filepath
-                # This is a simple approach - you might want more sophisticated duplicate detection
                 doc_id = None
+                if filepath:
+                    existing_doc = self.adapter.get_document_by_filepath(filepath)
+                    if existing_doc:
+                        doc_id = existing_doc["id"]
+                        logger.info(f"Document {filepath} already exists in database, using existing document ID")
                 
                 # Add document if it doesn't exist
                 if doc_id is None:

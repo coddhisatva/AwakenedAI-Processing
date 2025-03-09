@@ -52,4 +52,12 @@
 
 ## Day 7
 - EPUB implementation
-- PDFs that need OCR can be processed
+- PDFs that need OCR can be extracted and therefore processed
+- skip already extracted documents when extracting
+- automatic list of files that are in the db created upon adding files to the db (or not needing too bc it would be a dupe) ((validated))
+
+- filenames in db checked before insertion to prevent dupes in db -- didn't work
+- processing process yields stats about timing and performance, other stats
+- ran process, haven't investigated yet; stuff looks weird, but:
+  - 33/33 og files should be in the database and available now
+  - need to check db, and verify prod version has access

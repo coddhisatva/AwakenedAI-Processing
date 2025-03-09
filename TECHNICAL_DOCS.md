@@ -97,9 +97,9 @@ User Query → Query Processing → Vector Search → Context Retrieval → LLM 
 
 ## Production Processing Strategy
 
-For processing the full collection of 10,000-15,000 documents, we've designed a two-phase approach that efficiently handles both regular documents and those requiring OCR:
+For processing the full collection of 10,000-15,000 documents, we've designed an optimized approach that efficiently handles both regular documents and those requiring OCR:
 
-### Two-Phase Processing Approach
+### Optimized Two-Phase Processing Approach
 
 1. **Phase 1: Regular Document Processing**
    - Process all documents normally using PyPDF2 for PDFs and ebooklib for EPUBs
@@ -113,19 +113,49 @@ For processing the full collection of 10,000-15,000 documents, we've designed a 
    - Extract text from the OCR'd documents
    - This separated approach allows for scheduling intensive OCR processing at appropriate times
 
-### Benefits of Two-Phase Processing
+### Efficient Document Processing Implementation
 
-1. **Efficiency**: Regular documents are processed quickly without being delayed by OCR-intensive files
-2. **Resource Management**: OCR processing can be scheduled during off-hours or on dedicated machines
-3. **Progress Tracking**: Clearer visibility of overall progress and remaining OCR workload
-4. **Optimization**: Opportunity to adjust OCR parameters based on the specific document set identified
+Our production processing implementation uses a multi-level filtering approach to minimize unnecessary work:
 
-### Implementation Considerations
+1. **First-Level Filtering: Local Manifest**
+   - Check files against a local manifest file first (fastest check)
+   - Skip files already in manifest to avoid redundant extraction and processing
+   - The manifest tracks all files that have been processed or identified in the database
 
-- The OCR manifest tracks PDF files that need OCR, including file paths and basic metadata
-- Both phases skip already processed documents to support incremental processing and restarts
-- Statistics tracking distinguishes between regular processing and OCR processing
-- For the production run, the RAGPipeline implementation will be used rather than the sample processing tools
+2. **Second-Level Filtering: Database Check**
+   - For files not in the manifest, check against the database to detect duplicates
+   - Files found in the database but not in the manifest are added to the manifest as "database_duplicates"
+   - These files are tracked but not reprocessed, saving significant computational resources
+
+3. **Processing: Only True New Files**
+   - Process only files that are not in the manifest AND not in the database
+   - This ensures we do minimal processing work while maintaining a complete knowledge base
+
+4. **Final Safety Check: During Database Insertion**
+   - The vector store implementation performs a final check during insertion
+   - This catches any edge cases where another process may have added the same document
+   - Ensures complete database integrity without redundant entries
+
+### Benefits of the Optimized Approach
+
+1. **Efficiency**: Multiple filtering layers minimize unnecessary processing
+2. **Complete Tracking**: The manifest provides a comprehensive record of all available documents
+3. **Resource Management**: OCR processing can be scheduled separately for resource-intensive files
+4. **Progress Tracking**: Clearer visibility of overall progress and remaining work
+5. **Incremental Processing**: Support for adding new documents to an existing collection
+6. **Database Integrity**: Multiple checks ensure no duplicate entries in the database
+
+### Implementation Tools
+
+1. **Production Processing Tool** (`tools/process_all.py`)
+   - Implements the optimized multi-level filtering approach
+   - Processes the entire document collection efficiently
+   - Maintains a comprehensive manifest of all documents
+   - Command-line options for controlling processing behavior:
+     * `--force_reprocess`: Process all files regardless of manifest or database status
+     * `--update_manifest_only`: Only update the manifest with database files, skip processing
+     * `--batch_size`: Control processing batch size for memory management
+     * `--extensions`: Specify which file types to process
 
 ## Pipeline Implementations and Tools
 
