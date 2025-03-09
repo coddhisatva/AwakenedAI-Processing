@@ -6,13 +6,16 @@ from typing import Dict, Any, List
 import datetime
 
 import PyPDF2
+import ebooklib
+from ebooklib import epub
+from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class DocumentExtractor:
-    """Simple document extractor for PDF files."""
+    """Document extractor for PDF and EPUB files."""
     
     def __init__(self, raw_dir: str, processed_dir: str):
         """
@@ -30,12 +33,16 @@ class DocumentExtractor:
         self.stats = {
             "total": 0,
             "successful": 0,
-            "failed": 0
+            "failed": 0,
+            "by_type": {
+                "pdf": {"processed": 0, "failed": 0},
+                "epub": {"processed": 0, "failed": 0}
+            }
         }
     
     def extract_all(self) -> Dict[str, Any]:
         """
-        Process all PDF documents in the raw directory.
+        Process all PDF and EPUB documents in the raw directory.
         
         Returns:
             Statistics about the extraction process
@@ -46,18 +53,39 @@ class DocumentExtractor:
         pdf_files = list(self.raw_dir.glob("**/*.pdf"))
         logger.info(f"Found {len(pdf_files)} PDF files")
         
-        # Process each file
+        # Find all EPUB files
+        epub_files = list(self.raw_dir.glob("**/*.epub"))
+        logger.info(f"Found {len(epub_files)} EPUB files")
+        
+        # Process each PDF file
         for file_path in pdf_files:
             self.stats["total"] += 1
             try:
                 self._process_pdf(file_path)
                 self.stats["successful"] += 1
-                logger.info(f"Successfully processed {file_path.name}")
+                self.stats["by_type"]["pdf"]["processed"] += 1
+                logger.info(f"Successfully processed PDF: {file_path.name}")
             except Exception as e:
                 self.stats["failed"] += 1
-                logger.error(f"Failed to process {file_path}: {str(e)}")
+                self.stats["by_type"]["pdf"]["failed"] += 1
+                logger.error(f"Failed to process PDF {file_path}: {str(e)}")
+        
+        # Process each EPUB file
+        for file_path in epub_files:
+            self.stats["total"] += 1
+            try:
+                self._process_epub(file_path)
+                self.stats["successful"] += 1
+                self.stats["by_type"]["epub"]["processed"] += 1
+                logger.info(f"Successfully processed EPUB: {file_path.name}")
+            except Exception as e:
+                self.stats["failed"] += 1
+                self.stats["by_type"]["epub"]["failed"] += 1
+                logger.error(f"Failed to process EPUB {file_path}: {str(e)}")
         
         logger.info(f"Extraction complete. Processed {self.stats['successful']} files successfully, {self.stats['failed']} failed.")
+        logger.info(f"PDF: {self.stats['by_type']['pdf']['processed']} processed, {self.stats['by_type']['pdf']['failed']} failed")
+        logger.info(f"EPUB: {self.stats['by_type']['epub']['processed']} processed, {self.stats['by_type']['epub']['failed']} failed")
         return self.stats
     
     def _process_pdf(self, file_path: Path) -> None:
@@ -121,6 +149,67 @@ class DocumentExtractor:
             else:
                 logger.warning(f"No text extracted from {file_path}")
                 raise ValueError(f"No text extracted from {file_path}")
+    
+    def _process_epub(self, file_path: Path) -> None:
+        """
+        Process a single EPUB file.
+        
+        Args:
+            file_path: Path to the EPUB file
+        """
+        # Load the EPUB file
+        book = epub.read_epub(str(file_path))
+        
+        # Extract text from all HTML items
+        text = ""
+        chapter_count = 0
+        
+        # Helper function to extract text from HTML content
+        def chapter_to_text(content):
+            soup = BeautifulSoup(content, 'html.parser')
+            return soup.get_text(' ', strip=True)
+        
+        # Process each document item
+        for item in book.get_items():
+            if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                chapter_text = chapter_to_text(item.get_content())
+                if chapter_text:
+                    text += chapter_text + "\n\n"
+                    chapter_count += 1
+        
+        # Create metadata with available EPUB information
+        metadata = {
+            "filename": file_path.name,
+            "file_size": os.path.getsize(file_path),
+            "num_chapters": chapter_count,
+            "file_type": "epub"
+        }
+        
+        # Extract metadata from the EPUB
+        if book.get_metadata('DC', 'title'):
+            metadata["title"] = book.get_metadata('DC', 'title')[0][0]
+        if book.get_metadata('DC', 'creator'):
+            metadata["author"] = book.get_metadata('DC', 'creator')[0][0]
+        if book.get_metadata('DC', 'description'):
+            metadata["description"] = book.get_metadata('DC', 'description')[0][0]
+        if book.get_metadata('DC', 'publisher'):
+            metadata["publisher"] = book.get_metadata('DC', 'publisher')[0][0]
+        if book.get_metadata('DC', 'date'):
+            metadata["date"] = book.get_metadata('DC', 'date')[0][0]
+        if book.get_metadata('DC', 'language'):
+            metadata["language"] = book.get_metadata('DC', 'language')[0][0]
+        
+        # If no title in metadata, use filename without extension as title
+        if "title" not in metadata or not metadata["title"]:
+            metadata["title"] = file_path.stem
+        
+        # Save the extracted content and metadata
+        if text:
+            output_path = self.processed_dir / f"{file_path.stem}.json"
+            self._save_processed_document(output_path, text, metadata)
+        else:
+            logger.warning(f"No text extracted from {file_path}")
+            raise ValueError(f"No text extracted from {file_path}")
     
     def _save_processed_document(self, output_path: Path, content: str, metadata: Dict[str, Any]) -> None:
         """

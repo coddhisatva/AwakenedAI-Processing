@@ -42,8 +42,10 @@ Raw Documents → Text Extraction → Semantic Chunking → Embedding Generation
 1. **Document Extractor** (`src/extraction/extractor.py`)
    - Extracts text from various document formats (PDF, EPUB, etc.)
    - Creates JSON files with extracted text and metadata
-   - Currently implemented for PDF files using PyPDF2
+   - PDF processing implemented using PyPDF2
+   - EPUB processing implemented using ebooklib and BeautifulSoup
    - Extracts rich metadata (title, author, etc.) from document properties
+   - Handles different document structures (pages for PDFs, chapters for EPUBs)
 
 2. **Semantic Chunker** (`src/processing/chunker.py`)
    - Splits documents into semantic chunks for better retrieval
@@ -174,11 +176,19 @@ AwakenedAI/
 The `DocumentExtractor` class handles the extraction of text from various document formats:
 
 - Initialization with raw and processed directories
-- Method to extract text from PDF files using PyPDF2
-- Error handling for encrypted or problematic PDFs
-- Rich metadata extraction (title, author, subject, creator)
+- Support for multiple document formats:
+  - PDF extraction using PyPDF2
+  - EPUB extraction using ebooklib and BeautifulSoup
+- Format-specific processing techniques:
+  - Page-based extraction for PDFs
+  - Chapter-based extraction for EPUBs
+- Rich metadata extraction:
+  - PDF metadata: title, author, subject, creator
+  - EPUB metadata: title, author, description, publisher, date, language
+- Error handling for encrypted or problematic documents
 - Fallback to filename as title when metadata is missing
 - JSON output with extracted text and metadata
+- Detailed processing statistics for each file format
 
 ### Semantic Chunker (`src/processing/chunker.py`)
 
@@ -254,7 +264,7 @@ The project uses environment variables for configuration, stored in the `.env` f
 
 Each component has a corresponding test script:
 
-- `test_extractor.py`: Tests the document extraction functionality
+- `test_extractor.py`: Tests the document extraction functionality for PDF and EPUB
 - `test_chunker.py`: Tests the semantic chunking functionality
 - `test_embedder.py`: Tests the embedding generation
 - `test_vector_store.py`: Tests the Supabase vector store implementation
@@ -315,15 +325,16 @@ The LLM integration provides AI-generated responses based on retrieved context:
 ## Current Status
 
 - ✅ Document extraction is implemented and fully tested for PDF files
+- ✅ Document extraction for EPUB files is implemented and fully tested
 - ✅ Semantic chunking is implemented and fully tested
 - ✅ Embedding generation is implemented and fully tested
 - ✅ Migration from ChromaDB to Supabase is complete
 - ✅ Vector database implementation with Supabase is complete and tested
 - ✅ End-to-end pipeline is functional and verified:
   - Successfully processed multiple documents through the entire pipeline
-  - Extracted text from PDFs, generated semantic chunks, created embeddings, and stored in Supabase
+  - Extracted text from PDFs and EPUBs, generated semantic chunks, created embeddings, and stored in Supabase
 - ✅ Enhanced metadata extraction implemented:
-  - Extracts title, author, and other document properties from PDFs
+  - Extracts title, author, and other document properties from PDFs and EPUBs
   - Fallback to filename when metadata is missing
 - ✅ LLM integration is implemented and tested:
   - Upgraded to GPT-4 Turbo as the default model
@@ -333,7 +344,6 @@ The LLM integration provides AI-generated responses based on retrieved context:
 
 ## Scaling Considerations
 
-- Implementation of EPUB support for remaining document types
 - Parallel processing for improved throughput
 - Incremental processing of the full document collection
 - Integration with the web application (future repository)
@@ -355,3 +365,10 @@ The web application will be developed in a separate repository with:
 3. Niacin_The_Real_Story_Learn_about_the_Wonderful_Healing_Properties.pdf
 4. The-Book_of_five_rings_-_Kenji_tokitsu-Japanese-strategy.pdf
 5. _Dr_Mark_Sircus_Transdermal_Magnesium_Therapy_A_New_Modality_for.pdf
+6. Erikson, Thomas - Surrounded by Idiots (2019).epub
+7. Hypnotically Annihilating Anxiety - Penetr - The Rogue Hypnotist.epub
+8. WILBER, Ken - The Religion of Tomorrow.epub
+9. the-symbolism-of-freemasons-9781594629136.epub
+10. Paramahansa_Yogananda_How_You_Can_Talk_With_God_Yogoda_Satsanga_.epub
+11. The Asshole Survival Guide--How to Deal with People Who Treat You Like Dirt - Robert I. Sutton.epub
+12. Uncover_Your_Authentic_Self_Through_Shadow_Work_by_Kristina_Rosen.epub

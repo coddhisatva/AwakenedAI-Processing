@@ -49,3 +49,6 @@
 - Improved source attribution in chat responses with proper document titles
 - Upgraded default LLM from GPT-3.5 Turbo to GPT-4 Turbo
 - Implemented single-text embedding functionality for improved query handling
+
+## Day 7
+- EPUB implementation
