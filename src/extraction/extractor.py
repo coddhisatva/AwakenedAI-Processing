@@ -65,8 +65,8 @@ class DocumentExtractor:
         for file_path in pdf_files:
             self.stats["total"] += 1
             try:
-                self._process_pdf(file_path)
-                # Successfully processed stat is incremented inside _process_pdf
+                self.extract_pdf(file_path)
+                # Successfully processed stat is incremented inside extract_pdf
             except Exception as e:
                 self.stats["failed"] += 1
                 self.stats["by_type"]["pdf"]["failed"] += 1
@@ -76,8 +76,8 @@ class DocumentExtractor:
         for file_path in epub_files:
             self.stats["total"] += 1
             try:
-                self._process_epub(file_path)
-                # Successfully processed stat is incremented inside _process_epub
+                self.extract_epub(file_path)
+                # Successfully processed stat is incremented inside extract_epub
             except Exception as e:
                 self.stats["failed"] += 1
                 self.stats["by_type"]["epub"]["failed"] += 1
@@ -88,9 +88,9 @@ class DocumentExtractor:
         logger.info(f"EPUB: {self.stats['by_type']['epub']['processed']} processed, {self.stats['by_type']['epub']['failed']} failed, {self.stats['by_type']['epub']['skipped']} skipped")
         return self.stats
     
-    def _process_pdf(self, file_path: Path) -> None:
+    def extract_pdf(self, file_path: Path) -> None:
         """
-        Process a single PDF file, using OCR if regular extraction fails.
+        Extract text from a PDF file and save to the processed directory.
         
         Args:
             file_path: Path to the PDF file
@@ -219,9 +219,9 @@ class DocumentExtractor:
             logger.error(f"Error processing PDF {file_path}: {str(e)}")
             raise
     
-    def _process_epub(self, file_path: Path) -> None:
+    def extract_epub(self, file_path: Path) -> None:
         """
-        Process a single EPUB file.
+        Extract text from an EPUB file and save to the processed directory.
         
         Args:
             file_path: Path to the EPUB file
