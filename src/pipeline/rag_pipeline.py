@@ -293,6 +293,58 @@ class RAGPipeline:
         
         return manifest_files, database_files, new_files
     
+    # Add this helper function for counting tokens
+    def _count_tokens(self, text: str) -> int:
+        """
+        Count the number of tokens in a text string.
+        This is a simple approximation - OpenAI's tokenizer may count slightly differently.
+        
+        Args:
+            text: The text to count tokens for
+            
+        Returns:
+            Approximate number of tokens
+        """
+        # A simple approximation: 1 token ≈ 4 characters for English text
+        return len(text) // 4
+        
+    def _split_chunk_by_tokens(self, chunk: Dict[str, Any], max_tokens: int = 8000) -> List[Dict[str, Any]]:
+        """
+        Split a large chunk into smaller chunks based on token count.
+        
+        Args:
+            chunk: The chunk to split
+            max_tokens: Maximum tokens per chunk
+            
+        Returns:
+            List of smaller chunks
+        """
+        text = chunk["content"]
+        total_tokens = self._count_tokens(text)
+        
+        if total_tokens <= max_tokens:
+            return [chunk]
+            
+        # If chunk is too large, split it
+        logger.warning(f"Chunk too large ({total_tokens} tokens). Splitting into smaller chunks.")
+        
+        # Estimate characters per token
+        chars_per_token = len(text) / total_tokens
+        max_chars = int(max_tokens * chars_per_token * 0.9)  # 10% margin of safety
+        
+        # Split the text into smaller chunks
+        result_chunks = []
+        for i in range(0, len(text), max_chars):
+            sub_text = text[i:i + max_chars]
+            if sub_text:
+                result_chunks.append({
+                    "content": sub_text,
+                    "metadata": chunk["metadata"].copy()
+                })
+                
+        logger.info(f"Split large chunk into {len(result_chunks)} smaller chunks.")
+        return result_chunks
+
     def process_files(self, file_paths: List[str], batch_size: int = 5) -> int:
         """
         Process a specific list of files through the pipeline.
@@ -348,29 +400,60 @@ class RAGPipeline:
             # Create chunks for each document
             all_chunks = []
             for doc in batch:
-                chunks = self.chunker.create_chunks(doc["text"])
-                # Add document metadata to each chunk
-                for chunk in chunks:
-                    chunk["metadata"] = {
-                        "source": doc["source"],
-                        "title": doc.get("title", "Unknown"),
-                        "page": doc.get("page", None),
-                        "chapter": doc.get("chapter", None)
-                    }
+                # Split text into sentences
+                sentences = self.chunker._split_into_sentences(doc["text"])
+                
+                # Create document metadata
+                metadata = {
+                    "source": doc["source"],
+                    "title": doc.get("title", "Unknown"),
+                    "page": doc.get("page", None),
+                    "chapter": doc.get("chapter", None)
+                }
+                
+                # Create chunks from sentences
+                chunks = self.chunker._create_chunks_from_sentences(sentences, metadata)
                 all_chunks.extend(chunks)
             
             logger.info(f"Created {len(all_chunks)} chunks from batch")
             
-            # Create embeddings for chunks
-            embedded_chunks = self.embedder.create_embeddings(all_chunks)
+            # Check for and split large chunks before embedding
+            token_safe_chunks = []
+            for chunk in all_chunks:
+                # Split large chunks into smaller ones
+                split_chunks = self._split_chunk_by_tokens(chunk, max_tokens=8000)
+                token_safe_chunks.extend(split_chunks)
+                
+            if len(token_safe_chunks) > len(all_chunks):
+                logger.info(f"Split {len(all_chunks)} chunks into {len(token_safe_chunks)} smaller chunks to comply with token limits")
+            
+            # Generate embeddings for the chunks
+            embedded_chunks = []
+            for chunk in token_safe_chunks:
+                try:
+                    # Generate embedding for chunk
+                    embedding = self.embedder.create_embedding(chunk["content"])
+                    
+                    # Add embedding to chunk
+                    embedded_chunk = {
+                        "content": chunk["content"],
+                        "metadata": chunk["metadata"],
+                        "embedding": embedding
+                    }
+                    embedded_chunks.append(embedded_chunk)
+                except Exception as e:
+                    logger.error(f"Error generating embedding: {str(e)} - Chunk size: {len(chunk['content'])} chars, ~{self._count_tokens(chunk['content'])} tokens")
+                    # Continue with other chunks
+                    continue
+            
             logger.info(f"Created embeddings for {len(embedded_chunks)} chunks")
             
-            # Store chunks in vector database
-            ids = self.vector_store.add_documents(embedded_chunks)
-            doc_ids.extend(ids)
-            total_chunks += len(ids)
-            
-            logger.info(f"Stored {len(ids)} chunks in vector database")
+            # Store chunks in vector database using the correct method
+            if embedded_chunks:
+                ids = self.vector_store.add_documents(embedded_chunks)
+                doc_ids.extend(ids)
+                total_chunks += len(ids)
+                logger.info(f"Stored {len(ids)} chunks in vector database")
             
         logger.info(f"Pipeline processing complete. Total chunks stored: {total_chunks}")
         return total_chunks
