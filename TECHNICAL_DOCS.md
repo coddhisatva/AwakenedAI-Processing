@@ -44,8 +44,10 @@ Raw Documents → Text Extraction → Semantic Chunking → Embedding Generation
    - Creates JSON files with extracted text and metadata
    - PDF processing implemented using PyPDF2
    - EPUB processing implemented using ebooklib and BeautifulSoup
+   - OCR capability for PDFs without extractable text via OCRmyPDF
    - Extracts rich metadata (title, author, etc.) from document properties
    - Handles different document structures (pages for PDFs, chapters for EPUBs)
+   - Skips already processed documents to avoid redundant work
 
 2. **Semantic Chunker** (`src/processing/chunker.py`)
    - Splits documents into semantic chunks for better retrieval
@@ -92,6 +94,38 @@ User Query → Query Processing → Vector Search → Context Retrieval → LLM 
    - Rich text formatting for user experience
    - Displays responses with source attribution
    - Interactive session management
+
+## Production Processing Strategy
+
+For processing the full collection of 10,000-15,000 documents, we've designed a two-phase approach that efficiently handles both regular documents and those requiring OCR:
+
+### Two-Phase Processing Approach
+
+1. **Phase 1: Regular Document Processing**
+   - Process all documents normally using PyPDF2 for PDFs and ebooklib for EPUBs
+   - When a PDF has no extractable text (requires OCR), add it to an OCR manifest file
+   - Continue processing other documents without waiting for OCR
+   - This phase processes the majority of documents (70-90%) quickly
+
+2. **Phase 2: OCR-Intensive Processing**
+   - Process only the documents identified in the OCR manifest file
+   - Apply OCR using OCRmyPDF to create searchable text layers
+   - Extract text from the OCR'd documents
+   - This separated approach allows for scheduling intensive OCR processing at appropriate times
+
+### Benefits of Two-Phase Processing
+
+1. **Efficiency**: Regular documents are processed quickly without being delayed by OCR-intensive files
+2. **Resource Management**: OCR processing can be scheduled during off-hours or on dedicated machines
+3. **Progress Tracking**: Clearer visibility of overall progress and remaining OCR workload
+4. **Optimization**: Opportunity to adjust OCR parameters based on the specific document set identified
+
+### Implementation Considerations
+
+- The OCR manifest tracks PDF files that need OCR, including file paths and basic metadata
+- Both phases skip already processed documents to support incremental processing and restarts
+- Statistics tracking distinguishes between regular processing and OCR processing
+- For the production run, the RAGPipeline implementation will be used rather than the sample processing tools
 
 ## Pipeline Implementations and Tools
 
@@ -238,10 +272,17 @@ The `DocumentExtractor` class handles the extraction of text from various docume
 - Format-specific processing techniques:
   - Page-based extraction for PDFs
   - Chapter-based extraction for EPUBs
+- OCR capability for PDFs without extractable text:
+  - Uses OCRmyPDF to create searchable text layers
+  - Applies image processing optimizations like deskewing
+  - Extracts text from the OCR'd document
 - Rich metadata extraction:
   - PDF metadata: title, author, subject, creator
   - EPUB metadata: title, author, description, publisher, date, language
 - Error handling for encrypted or problematic documents
+- Skip processing for already processed documents:
+  - Checks if output file exists before processing
+  - Maintains statistics for skipped files 
 - Fallback to filename as title when metadata is missing
 - JSON output with extracted text and metadata
 - Detailed processing statistics for each file format
@@ -457,6 +498,8 @@ The LLM integration provides AI-generated responses based on retrieved context:
 
 - ✅ Document extraction is implemented and fully tested for PDF files
 - ✅ Document extraction for EPUB files is implemented and fully tested
+- ✅ OCR capability for PDFs without extractable text
+- ✅ Skip processing for already processed documents
 - ✅ Semantic chunking is implemented and fully tested
 - ✅ Embedding generation is implemented and fully tested
 - ✅ Migration from ChromaDB to Supabase is complete
@@ -472,6 +515,9 @@ The LLM integration provides AI-generated responses based on retrieved context:
   - Connected to OpenAI API for response generation
   - Created interactive chat interface
   - Implemented enhanced source attribution with document titles
+- ⏳ Two-phase processing for production-scale document collection:
+  - Proposed approach for efficiently handling regular and OCR-intensive documents
+  - To be implemented in the RAGPipeline for production use
 
 ## Scaling Considerations
 
@@ -503,3 +549,5 @@ The web application will be developed in a separate repository with:
 10. Paramahansa_Yogananda_How_You_Can_Talk_With_God_Yogoda_Satsanga_.epub
 11. The Asshole Survival Guide--How to Deal with People Who Treat You Like Dirt - Robert I. Sutton.epub
 12. Uncover_Your_Authentic_Self_Through_Shadow_Work_by_Kristina_Rosen.epub
+13. Frank Rudolph Young - Cyclomancy - The Secret of Psychic Power Control.pdf (OCR processed)
+14. frank-rudolph-young-yoga-for-men-only.pdf (OCR processed)
