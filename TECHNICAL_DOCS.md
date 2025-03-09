@@ -93,6 +93,62 @@ User Query → Query Processing → Vector Search → Context Retrieval → LLM 
    - Displays responses with source attribution
    - Interactive session management
 
+## Pipeline Implementations and Tools
+
+The project has two distinct implementations of the document processing pipeline, each serving different purposes:
+
+### 1. RAGPipeline Class (`src/pipeline/rag_pipeline.py`)
+
+**Purpose:** Core pipeline implementation designed for production-scale processing and querying.
+
+**Features:**
+- In-memory processing approach for efficiency
+- Handles the entire document processing flow (extraction → chunking → embedding → storage)
+- Provides a query interface for retrieving documents
+- Optimized for processing large document collections (thousands of files)
+
+**Usage:**
+- Used by query tools (query_cli.py, chat_cli.py) for retrieving documents
+- Should be used for full-scale processing of the entire document collection
+- Not directly exposed through a CLI tool for processing
+
+### 2. Process Sample Tool (`tools/process_sample.py`)
+
+**Purpose:** Testing and development tool for processing small batches of documents.
+
+**Features:**
+- File-based approach with intermediate JSON files for easy inspection
+- Command-line options for controlling processing (file count, specific files, extensions)
+- Support for random sampling of documents
+- Detailed logging and statistics
+- Designed for smaller-scale testing and validation
+
+**Usage:**
+- Use during development and testing
+- Process small document samples to verify pipeline functionality
+- Test new document types or processing features
+- NOT intended for processing the complete document collection
+
+### When to Use Each Implementation:
+
+1. **For testing with small batches (5-10 documents):**
+   - Use `process_sample.py` with appropriate options
+   - Example: `python tools/process_sample.py --count 5 --extensions pdf epub`
+
+2. **For querying the system:**
+   - Use `query_cli.py` or `chat_cli.py`
+   - These tools use the RAGPipeline implementation for retrieval
+
+3. **For full-scale processing (thousands of documents):**
+   - Currently, there is no dedicated CLI tool for this
+   - A new tool based on RAGPipeline.process_directory should be created for this purpose
+
+### Future Development:
+
+**Planned Tools:**
+- Create `process_collection.py` that uses RAGPipeline.process_directory for full-scale processing
+- This tool will leverage the more efficient in-memory processing approach of RAGPipeline for handling the entire document collection
+
 ## Directory Structure
 
 ```
@@ -115,14 +171,14 @@ AwakenedAI/
 │   │   ├── query.py          # Query engine implementation
 │   │   └── llm.py            # LLM service implementation
 │   ├── pipeline/             # Pipeline integration
-│   │   └── rag_pipeline.py   # RAG pipeline implementation
+│   │   └── rag_pipeline.py   # RAG pipeline implementation (core pipeline for production)
 │   └── retrieval/            # Vector search and retrieval modules
 ├── database/
 │   └── supabase_adapter.py   # Supabase database adapter
 ├── tools/
-│   ├── process_sample.py     # Tool for processing sample documents
-│   ├── query_cli.py          # Basic query CLI tool
-│   ├── chat_cli.py           # Interactive chat interface
+│   ├── process_sample.py     # Tool for processing sample documents (testing/development)
+│   ├── query_cli.py          # Basic query CLI tool (uses RAGPipeline)
+│   ├── chat_cli.py           # Interactive chat interface (uses RAGPipeline)
 │   ├── check_collection.py   # Tool for checking vector DB contents
 │   └── show_sources.py       # Tool for displaying document sources
 ├── tests/
@@ -229,6 +285,18 @@ The `SupabaseAdapter` class handles direct interactions with Supabase:
 - Vector similarity search using pgvector
 - Document metadata management
 
+### RAGPipeline (`src/pipeline/rag_pipeline.py`)
+
+The `RAGPipeline` class provides an integrated pipeline implementation:
+
+- Orchestrates all components (extraction, chunking, embedding, storage)
+- In-memory processing approach for efficiency
+- Methods:
+  - `process_directory`: Process all documents in a directory
+  - `query`: Search for relevant documents
+- Used by query tools but not directly exposed for document processing
+- Designed for production-scale processing of the full document collection
+
 ### Query Engine (`src/interface/query.py`)
 
 The `QueryEngine` class provides the interface for querying the system:
@@ -246,6 +314,69 @@ The `LLMService` class handles interactions with the language model:
 - Response generation from context and query
 - Retry logic for API resilience
 - Structured response format with source attribution
+
+## Tools Usage Guide
+
+### 1. Process Sample Documents (Testing/Development)
+
+**Tool:** `tools/process_sample.py`
+
+**Purpose:** Process a small batch of documents for testing and development.
+
+**Key Options:**
+- `--count`: Number of documents to randomly select (default: 5)
+- `--extensions`: File extensions to include (default: pdf epub txt)
+- `--specific_files`: Process specific files instead of random selection
+
+**Example Usage:**
+```bash
+# Process 10 random documents
+python tools/process_sample.py --count 10
+
+# Process specific file types
+python tools/process_sample.py --extensions pdf epub
+
+# Process specific files
+python tools/process_sample.py --specific_files data/raw/document1.pdf data/raw/document2.epub
+```
+
+**Notes:**
+- Creates intermediate JSON files in processed/, chunks/, and embeddings/ directories
+- Detailed logging for debugging
+- NOT recommended for full-scale processing of thousands of documents
+
+### 2. Query the System (Basic Interface)
+
+**Tool:** `tools/query_cli.py`
+
+**Purpose:** Simple command-line interface for querying the system.
+
+**Example Usage:**
+```bash
+python tools/query_cli.py "What is the significance of magnesium in health?"
+```
+
+**Notes:**
+- Uses RAGPipeline for document retrieval
+- Returns raw chunks without LLM processing by default
+- Add --ai flag to get LLM-generated responses
+
+### 3. Interactive Chat (Advanced Interface)
+
+**Tool:** `tools/chat_cli.py`
+
+**Purpose:** Rich interactive chat interface with history and formatting.
+
+**Example Usage:**
+```bash
+python tools/chat_cli.py
+```
+
+**Notes:**
+- Uses RAGPipeline for document retrieval
+- Maintains conversation history
+- Includes source attribution
+- Uses GPT-4 Turbo by default for responses
 
 ## Configuration
 
