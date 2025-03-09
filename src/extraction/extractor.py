@@ -36,9 +36,10 @@ class DocumentExtractor:
             "total": 0,
             "successful": 0,
             "failed": 0,
+            "skipped": 0,
             "by_type": {
-                "pdf": {"processed": 0, "failed": 0, "ocr_applied": 0},
-                "epub": {"processed": 0, "failed": 0}
+                "pdf": {"processed": 0, "failed": 0, "ocr_applied": 0, "skipped": 0},
+                "epub": {"processed": 0, "failed": 0, "skipped": 0}
             }
         }
     
@@ -50,6 +51,7 @@ class DocumentExtractor:
             Statistics about the extraction process
         """
         logger.info(f"Starting extraction of documents from {self.raw_dir}")
+        logger.info("Will skip already processed files")
         
         # Find all PDF files
         pdf_files = list(self.raw_dir.glob("**/*.pdf"))
@@ -64,9 +66,7 @@ class DocumentExtractor:
             self.stats["total"] += 1
             try:
                 self._process_pdf(file_path)
-                self.stats["successful"] += 1
-                self.stats["by_type"]["pdf"]["processed"] += 1
-                logger.info(f"Successfully processed PDF: {file_path.name}")
+                # Successfully processed stat is incremented inside _process_pdf
             except Exception as e:
                 self.stats["failed"] += 1
                 self.stats["by_type"]["pdf"]["failed"] += 1
@@ -77,17 +77,15 @@ class DocumentExtractor:
             self.stats["total"] += 1
             try:
                 self._process_epub(file_path)
-                self.stats["successful"] += 1
-                self.stats["by_type"]["epub"]["processed"] += 1
-                logger.info(f"Successfully processed EPUB: {file_path.name}")
+                # Successfully processed stat is incremented inside _process_epub
             except Exception as e:
                 self.stats["failed"] += 1
                 self.stats["by_type"]["epub"]["failed"] += 1
                 logger.error(f"Failed to process EPUB {file_path}: {str(e)}")
         
-        logger.info(f"Extraction complete. Processed {self.stats['successful']} files successfully, {self.stats['failed']} failed.")
-        logger.info(f"PDF: {self.stats['by_type']['pdf']['processed']} processed, {self.stats['by_type']['pdf']['failed']} failed, {self.stats['by_type']['pdf']['ocr_applied']} required OCR")
-        logger.info(f"EPUB: {self.stats['by_type']['epub']['processed']} processed, {self.stats['by_type']['epub']['failed']} failed")
+        logger.info(f"Extraction complete. Processed {self.stats['successful']} files successfully, {self.stats['failed']} failed, {self.stats['skipped']} skipped.")
+        logger.info(f"PDF: {self.stats['by_type']['pdf']['processed']} processed, {self.stats['by_type']['pdf']['failed']} failed, {self.stats['by_type']['pdf']['ocr_applied']} required OCR, {self.stats['by_type']['pdf']['skipped']} skipped")
+        logger.info(f"EPUB: {self.stats['by_type']['epub']['processed']} processed, {self.stats['by_type']['epub']['failed']} failed, {self.stats['by_type']['epub']['skipped']} skipped")
         return self.stats
     
     def _process_pdf(self, file_path: Path) -> None:
@@ -97,6 +95,14 @@ class DocumentExtractor:
         Args:
             file_path: Path to the PDF file
         """
+        # Check if this file has already been processed
+        output_path = self.processed_dir / f"{file_path.stem}.json"
+        if output_path.exists():
+            logger.info(f"Skipping already processed file: {file_path.name}")
+            self.stats["skipped"] += 1
+            self.stats["by_type"]["pdf"]["skipped"] += 1
+            return
+        
         # First try regular PDF extraction
         try:
             # Extract text using PyPDF2
@@ -149,8 +155,9 @@ class DocumentExtractor:
                 
                 # If text was extracted, save it
                 if text.strip():
-                    output_path = self.processed_dir / f"{file_path.stem}.json"
                     self._save_processed_document(output_path, text, metadata)
+                    self.stats["successful"] += 1
+                    self.stats["by_type"]["pdf"]["processed"] += 1
                     return
                 
                 logger.info(f"No text extracted with PyPDF2 for {file_path.name}, attempting OCR")
@@ -195,8 +202,9 @@ class DocumentExtractor:
                 
                 # Save the extracted content and metadata
                 if text.strip():
-                    output_path = self.processed_dir / f"{file_path.stem}.json"
                     self._save_processed_document(output_path, text, metadata)
+                    self.stats["successful"] += 1
+                    self.stats["by_type"]["pdf"]["processed"] += 1
                     logger.info(f"Successfully extracted text with OCR for {file_path.name}")
                     return
                 else:
@@ -218,6 +226,14 @@ class DocumentExtractor:
         Args:
             file_path: Path to the EPUB file
         """
+        # Check if this file has already been processed
+        output_path = self.processed_dir / f"{file_path.stem}.json"
+        if output_path.exists():
+            logger.info(f"Skipping already processed file: {file_path.name}")
+            self.stats["skipped"] += 1
+            self.stats["by_type"]["epub"]["skipped"] += 1
+            return
+            
         # Load the EPUB file
         book = epub.read_epub(str(file_path))
         
@@ -266,8 +282,9 @@ class DocumentExtractor:
         
         # Save the extracted content and metadata
         if text:
-            output_path = self.processed_dir / f"{file_path.stem}.json"
             self._save_processed_document(output_path, text, metadata)
+            self.stats["successful"] += 1
+            self.stats["by_type"]["epub"]["processed"] += 1
         else:
             logger.warning(f"No text extracted from {file_path}")
             raise ValueError(f"No text extracted from {file_path}")
