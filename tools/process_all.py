@@ -161,12 +161,32 @@ def setup_pipeline(args):
     
     return pipeline, extractor, vector_store
 
-def find_all_files(directory_path: Path, extensions: List[str]) -> List[Path]:
-    """Get all files with the specified extensions in the directory."""
+def find_all_files(directory_path: Path, extensions: List[str], skip_ocr: bool = False) -> List[Path]:
+    """
+    Get all files with the specified extensions in the directory.
+    
+    Args:
+        directory_path: Path to search for files
+        extensions: List of file extensions to include
+        skip_ocr: Whether to skip files that likely need OCR
+    """
     all_files = []
     for ext in extensions:
         all_files.extend(list(directory_path.glob(f"**/*.{ext}")))
-    return all_files
+    
+    # Skip OCR files if requested
+    skipped_ocr_count = 0
+    if skip_ocr:
+        # Known OCR-needing files
+        ocr_files = [f for f in all_files if any(pattern in f.name.lower() 
+                     for pattern in ["frank-rudolph-young", "cyclomancy", "yoga-for-men-only"])]
+        
+        if ocr_files:
+            logger.info(f"Skipping {len(ocr_files)} files that need OCR: {', '.join(f.name for f in ocr_files)}")
+            all_files = [f for f in all_files if f not in ocr_files]
+            skipped_ocr_count = len(ocr_files)
+    
+    return all_files, skipped_ocr_count
 
 def categorize_files(files: List[Path], 
                     manifest: Dict[str, Dict[str, Any]], 
@@ -264,6 +284,11 @@ def main():
         action="store_true",
         help="Only update the manifest with files found in the database, don't process any files"
     )
+    parser.add_argument(
+        "--skip_ocr",
+        action="store_true",
+        help="Skip files that need OCR processing"
+    )
     
     args = parser.parse_args()
     
@@ -278,6 +303,7 @@ def main():
         "manifest_files": 0,
         "database_files": 0,
         "new_files": 0,
+        "skipped_ocr_files": 0,
         "successful_files": 0,
         "failed_files": 0,
         "total_chunks": 0,
@@ -304,7 +330,8 @@ def main():
         # Get the list of all files in the directory
         with Timer("Finding files") as t:
             input_dir = Path(args.input_dir)
-            all_files = find_all_files(input_dir, args.extensions)
+            all_files, skipped_ocr_count = find_all_files(input_dir, args.extensions, args.skip_ocr)
+            stats["skipped_ocr_files"] = skipped_ocr_count
         stats["timings"]["find_files"] = t.elapsed
         
         if not all_files:
@@ -434,6 +461,8 @@ def main():
     logger.info("="*40)
     logger.info(f"Total processing time: {str(timedelta(seconds=stats['total_time']))}")
     logger.info(f"Total files found: {stats['total_files']}")
+    if stats.get("skipped_ocr_files", 0) > 0:
+        logger.info(f"Files skipped due to OCR: {stats['skipped_ocr_files']}")
     logger.info(f"Files in manifest: {stats['manifest_files']}")
     logger.info(f"Files in database: {stats['database_files']}")
     logger.info(f"New files: {stats['new_files']}")
