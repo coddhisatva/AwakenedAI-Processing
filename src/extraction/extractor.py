@@ -98,7 +98,7 @@ class DocumentExtractor:
         # Check if this file has already been processed
         output_path = self.processed_dir / f"{file_path.stem}.json"
         if output_path.exists():
-            logger.info(f"Skipping already processed file: {file_path.name}")
+            logger.info(f"Skipping already extracted file: {file_path.name}")
             self.stats["skipped"] += 1
             self.stats["by_type"]["pdf"]["skipped"] += 1
             return
@@ -229,7 +229,7 @@ class DocumentExtractor:
         # Check if this file has already been processed
         output_path = self.processed_dir / f"{file_path.stem}.json"
         if output_path.exists():
-            logger.info(f"Skipping already processed file: {file_path.name}")
+            logger.info(f"Skipping already extracted file: {file_path.name}")
             self.stats["skipped"] += 1
             self.stats["by_type"]["epub"]["skipped"] += 1
             return

@@ -61,3 +61,6 @@
 - ran process, haven't investigated yet; stuff looks weird, but:
   - 33/33 og files should be in the database and available now
   - need to check db, and verify prod version has access
+
+- Okay it only ran extraction not the rest
+- fixing this by consolidating to just rag pipeline file

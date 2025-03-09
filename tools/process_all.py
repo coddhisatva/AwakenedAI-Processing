@@ -20,6 +20,7 @@ import argparse
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Set, Tuple
+import tempfile
 
 # Add project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -375,7 +376,6 @@ def main():
         processing_timer.__enter__()
         
         try:
-            # If forcing reprocessing of all files
             if args.force_reprocess:
                 logger.info(f"Force reprocessing {len(all_files)} files")
                 with Timer("Full pipeline processing") as t:
@@ -392,54 +392,40 @@ def main():
                 # Only process new files
                 logger.info(f"Processing {len(new_files)} new files")
                 
-                # Use the pipeline to process the files
-                # This still leverages RAGPipeline but only on files we know need processing
-                successful_files = []
-                failed_files = []
-                per_file_times = []
+                # Create a temporary directory containing only the new files to process
+                temp_dir = Path(tempfile.mkdtemp())
+                logger.info(f"Created temporary directory for processing: {temp_dir}")
                 
-                # Process in batches
-                for i in range(0, len(new_files), args.batch_size):
-                    batch = new_files[i:i+args.batch_size]
-                    logger.info(f"Processing batch {i//args.batch_size + 1}/{(len(new_files)-1)//args.batch_size + 1}")
+                try:
+                    # Create symbolic links to the new files in the temporary directory
+                    for file_path in new_files:
+                        if file_path.exists():
+                            # Create a symlink to the original file
+                            link_path = temp_dir / file_path.name
+                            os.symlink(file_path, link_path)
+                            logger.debug(f"Created symlink for {file_path.name}")
                     
-                    for file_path in batch:
-                        file_timer = Timer(f"Processing {file_path.name}")
-                        file_timer.__enter__()
-                        try:
-                            if file_path.suffix.lower() == '.pdf':
-                                extractor._process_pdf(file_path)
-                            elif file_path.suffix.lower() == '.epub':
-                                extractor._process_epub(file_path)
-                            else:
-                                logger.warning(f"Unsupported file type: {file_path}")
-                                continue
-                            successful_files.append(file_path)
-                            file_timer.__exit__(None, None, None)
-                            per_file_times.append(file_timer.elapsed)
-                            logger.info(f"Processed {file_path.name} in {file_timer.elapsed_str}")
-                        except Exception as e:
-                            file_timer.__exit__(None, None, None)
-                            logger.error(f"Error processing {file_path}: {e}")
-                            failed_files.append(file_path)
+                    # Use the full pipeline to process all files in the temporary directory
+                    with Timer("Full pipeline processing") as t:
+                        total_chunks = pipeline.process_directory(str(temp_dir), batch_size=args.batch_size)
+                    
+                    stats["timings"]["full_pipeline"] = t.elapsed
+                    stats["total_chunks"] = total_chunks
+                    stats["successful_files"] = len(new_files)
                 
-                stats["successful_files"] = len(successful_files)
-                stats["failed_files"] = len(failed_files)
-                
-                if per_file_times:
-                    stats["avg_file_time"] = sum(per_file_times) / len(per_file_times)
-                    stats["min_file_time"] = min(per_file_times)
-                    stats["max_file_time"] = max(per_file_times)
-                
-                # Update manifest with successfully processed files
-                if successful_files:
+                    # Update manifest with successfully processed files
                     with Timer("Updating manifest with processed files") as t:
-                        update_processed_docs_manifest(manifest, successful_files, "direct_processing")
+                        update_processed_docs_manifest(manifest, new_files, "direct_processing")
                     stats["timings"]["update_manifest_processed"] = t.elapsed
-                    
-                logger.info(f"Processing complete. Successfully processed {len(successful_files)} files.")
-                if failed_files:
-                    logger.error(f"Failed to process {len(failed_files)} files.")
+                finally:
+                    # Clean up the temporary directory
+                    import shutil
+                    shutil.rmtree(temp_dir)
+                    logger.info(f"Removed temporary directory: {temp_dir}")
+                
+                logger.info(f"Processing complete. Successfully processed {len(new_files)} files.")
+                if len(new_files) == 0:
+                    logger.info("No new files to process.")
             
         except Exception as e:
             logger.error(f"Error processing documents: {e}")
