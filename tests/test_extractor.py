@@ -29,7 +29,7 @@ def test_pdf_extraction():
     # Process a single PDF file
     file_path = pdf_files[0]
     try:
-        extractor._process_pdf(file_path)
+        extractor.extract_pdf(file_path)
         output_path = Path(processed_dir) / f"{file_path.stem}.json"
         if output_path.exists():
             logger.info(f"Successfully processed PDF: {file_path.name}")
@@ -69,7 +69,7 @@ def test_epub_extraction():
     # Process a single EPUB file
     file_path = epub_files[0]
     try:
-        extractor._process_epub(file_path)
+        extractor.extract_epub(file_path)
         output_path = Path(processed_dir) / f"{file_path.stem}.json"
         if output_path.exists():
             logger.info(f"Successfully processed EPUB: {file_path.name}")

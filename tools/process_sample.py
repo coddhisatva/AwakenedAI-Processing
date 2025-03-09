@@ -73,7 +73,7 @@ def process_documents(components, files_to_process):
         try:
             # Process the PDF file directly
             try:
-                extractor._process_pdf(Path(file_path))
+                extractor.extract_pdf(Path(file_path))
                 processed_path = Path(extractor.processed_dir) / f"{Path(file_path).stem}.json"
                 processed_files.append(processed_path)
                 logger.info(f"Extracted document: {file_path} -> {processed_path}")
