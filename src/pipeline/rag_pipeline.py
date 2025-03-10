@@ -8,6 +8,8 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Set
+import statistics
+import math
 
 from dotenv import load_dotenv
 from src.extraction.extractor import DocumentExtractor
@@ -55,6 +57,237 @@ class Timer:
             msg = f"{msg} - {message}"
         logger.info(msg)
 
+class MetricsCollector:
+    """
+    Centralized metrics collection system for the RAG pipeline.
+    Collects timing and performance metrics from all pipeline phases.
+    """
+    
+    def __init__(self):
+        """Initialize the metrics collector."""
+        self.start_time = time.time()
+        
+        # Store timing metrics for different phases
+        self.timings = {
+            "total": 0,
+            "phases": {
+                "extraction": 0,
+                "chunking": 0,
+                "embedding": 0,
+                "storage": 0
+            },
+            "operations": {}
+        }
+        
+        # Store processing counts
+        self.counts = {
+            "files": {
+                "total": 0,
+                "manifest": 0,
+                "database": 0,
+                "new": 0,
+                "skipped_ocr": 0,
+                "successful": 0,
+                "failed": 0
+            },
+            "chunks": {
+                "total": 0,
+                "per_phase": {
+                    "chunking": 0,
+                    "embedding": 0,
+                    "storage": 0
+                }
+            },
+            "batches": {
+                "embedding": 0,
+                "storage": 0
+            }
+        }
+        
+        # Store rates (items per second)
+        self.rates = {
+            "files_per_second": 0,
+            "chunks_per_second": {
+                "chunking": 0,
+                "embedding": 0,
+                "storage": 0
+            },
+            "extraction": 0
+        }
+        
+        # For batch-specific metrics
+        self.batch_metrics = {
+            "embedding": {
+                "times": [],
+                "sizes": [],
+                "rates": []
+            },
+            "storage": {
+                "times": [],
+                "sizes": [],
+                "rates": []
+            }
+        }
+        
+        # For detailed breakdown analysis
+        self.phase_percentages = {}
+    
+    def start_timer(self, name: str) -> Timer:
+        """Start a new timer for an operation."""
+        return Timer(name)
+    
+    def record_operation_time(self, name: str, seconds: float) -> None:
+        """Record the time taken for a specific operation."""
+        self.timings["operations"][name] = seconds
+    
+    def record_phase_time(self, phase: str, seconds: float) -> None:
+        """Record the time taken for a major pipeline phase."""
+        if phase in self.timings["phases"]:
+            self.timings["phases"][phase] = seconds
+    
+    def update_file_counts(self, **kwargs) -> None:
+        """Update file count metrics."""
+        for key, value in kwargs.items():
+            if key in self.counts["files"]:
+                self.counts["files"][key] = value
+    
+    def update_chunk_counts(self, phase: str, count: int) -> None:
+        """Update chunk count metrics for a specific phase."""
+        if phase in self.counts["chunks"]["per_phase"]:
+            self.counts["chunks"]["per_phase"][phase] = count
+            
+        # Update total chunks if this is from the chunking phase
+        if phase == "chunking":
+            self.counts["chunks"]["total"] = count
+    
+    def record_batch_metrics(self, phase: str, batch_time: float, batch_size: int) -> None:
+        """Record metrics for a batch processing operation."""
+        if phase in self.batch_metrics:
+            self.batch_metrics[phase]["times"].append(batch_time)
+            self.batch_metrics[phase]["sizes"].append(batch_size)
+            
+            # Calculate rate (items per second)
+            rate = batch_size / batch_time if batch_time > 0 else 0
+            self.batch_metrics[phase]["rates"].append(rate)
+            
+            # Update batch count
+            self.counts["batches"][phase] += 1
+    
+    def finalize_metrics(self) -> None:
+        """Calculate final metrics once processing is complete."""
+        # Calculate total time
+        self.timings["total"] = time.time() - self.start_time
+        
+        # Calculate phase percentages
+        total_phase_time = sum(self.timings["phases"].values())
+        if total_phase_time > 0:
+            self.phase_percentages = {
+                phase: (time / self.timings["total"]) * 100
+                for phase, time in self.timings["phases"].items()
+            }
+        
+        # Calculate overall rates
+        if self.timings["total"] > 0:
+            self.rates["files_per_second"] = self.counts["files"]["successful"] / self.timings["total"]
+            
+            # Calculate per-phase rates
+            for phase in ["chunking", "embedding", "storage"]:
+                phase_time = self.timings["phases"].get(phase, 0)
+                if phase_time > 0:
+                    self.rates["chunks_per_second"][phase] = (
+                        self.counts["chunks"]["per_phase"].get(phase, 0) / phase_time
+                    )
+        
+        # Calculate average batch metrics
+        for phase in ["embedding", "storage"]:
+            if self.batch_metrics[phase]["times"]:
+                self.batch_metrics[phase]["avg_time"] = statistics.mean(self.batch_metrics[phase]["times"])
+                self.batch_metrics[phase]["avg_size"] = statistics.mean(self.batch_metrics[phase]["sizes"])
+                self.batch_metrics[phase]["avg_rate"] = statistics.mean(self.batch_metrics[phase]["rates"])
+    
+    def get_metrics_report(self) -> Dict[str, Any]:
+        """Get a comprehensive metrics report."""
+        self.finalize_metrics()
+        
+        return {
+            "timings": self.timings,
+            "counts": self.counts,
+            "rates": self.rates,
+            "batch_metrics": self.batch_metrics,
+            "phase_percentages": self.phase_percentages
+        }
+    
+    def get_formatted_report(self) -> str:
+        """Get a formatted metrics report suitable for display."""
+        self.finalize_metrics()
+        
+        # Create horizontal bar chart for phase percentages
+        bar_length = 40
+        phase_bars = {}
+        for phase, percentage in self.phase_percentages.items():
+            bar_chars = int((percentage / 100) * bar_length)
+            phase_bars[phase] = "█" * bar_chars + " " * (bar_length - bar_chars)
+        
+        # Build the report
+        report = []
+        report.append("\n" + "="*60)
+        report.append("RAG PIPELINE PERFORMANCE REPORT")
+        report.append("="*60)
+        
+        # Overall stats
+        report.append(f"\n📊 OVERALL STATISTICS:")
+        report.append(f"  • Total processing time: {str(timedelta(seconds=self.timings['total']))}")
+        report.append(f"  • Files processed: {self.counts['files']['successful']} of {self.counts['files']['total']} ({self.counts['files']['failed']} failed)")
+        report.append(f"  • Total chunks created: {self.counts['chunks']['total']}")
+        report.append(f"  • Overall processing rate: {self.rates['files_per_second']:.2f} files/second")
+        
+        # Phase analysis
+        report.append(f"\n🔄 PHASE ANALYSIS:")
+        for phase, percentage in self.phase_percentages.items():
+            bar = phase_bars.get(phase, "")
+            time_str = str(timedelta(seconds=self.timings["phases"].get(phase, 0)))
+            report.append(f"  • {phase.capitalize():10} {percentage:5.1f}% {bar} {time_str}")
+        
+        # Chunking, Embedding, and Storage metrics
+        if self.counts["chunks"]["per_phase"]["chunking"] > 0:
+            report.append(f"\n🧩 CHUNKING METRICS:")
+            report.append(f"  • Chunks created: {self.counts['chunks']['per_phase']['chunking']}")
+            report.append(f"  • Processing rate: {self.rates['chunks_per_second']['chunking']:.2f} chunks/second")
+        
+        if self.counts["batches"]["embedding"] > 0:
+            report.append(f"\n🔢 EMBEDDING METRICS:")
+            report.append(f"  • Chunks embedded: {self.counts['chunks']['per_phase']['embedding']}")
+            report.append(f"  • Batches processed: {self.counts['batches']['embedding']}")
+            report.append(f"  • Avg. batch size: {self.batch_metrics['embedding'].get('avg_size', 0):.1f} chunks")
+            report.append(f"  • Avg. batch time: {self.batch_metrics['embedding'].get('avg_time', 0):.2f} seconds")
+            report.append(f"  • Avg. processing rate: {self.rates['chunks_per_second']['embedding']:.2f} chunks/second")
+        
+        if self.counts["batches"]["storage"] > 0:
+            report.append(f"\n💾 STORAGE METRICS:")
+            report.append(f"  • Chunks stored: {self.counts['chunks']['per_phase']['storage']}")
+            report.append(f"  • Batches processed: {self.counts['batches']['storage']}")
+            report.append(f"  • Avg. batch size: {self.batch_metrics['storage'].get('avg_size', 0):.1f} chunks")
+            report.append(f"  • Avg. batch time: {self.batch_metrics['storage'].get('avg_time', 0):.2f} seconds")
+            report.append(f"  • Avg. processing rate: {self.rates['chunks_per_second']['storage']:.2f} chunks/second")
+        
+        # File processing breakdown
+        report.append(f"\n📁 FILE PROCESSING BREAKDOWN:")
+        report.append(f"  • Total files found: {self.counts['files']['total']}")
+        report.append(f"  • Files in manifest: {self.counts['files']['manifest']}")
+        report.append(f"  • Files in database: {self.counts['files']['database']}")
+        report.append(f"  • New files processed: {self.counts['files']['new']}")
+        if self.counts['files']['skipped_ocr'] > 0:
+            report.append(f"  • Files skipped (OCR): {self.counts['files']['skipped_ocr']}")
+        
+        # Operation timing details
+        report.append(f"\n⏱️ DETAILED TIMING:")
+        for op_name, op_time in sorted(self.timings["operations"].items()):
+            report.append(f"  • {op_name}: {str(timedelta(seconds=op_time))}")
+        
+        report.append("\n" + "="*60)
+        
+        return "\n".join(report)
+
 class RAGPipeline:
     """
     Complete RAG pipeline that handles all document processing steps:
@@ -100,7 +333,10 @@ class RAGPipeline:
         # Set up database adapter for duplicate checking
         self.db_adapter = SupabaseAdapter()
         
-        # Statistics tracking
+        # Initialize metrics collector
+        self.metrics = MetricsCollector()
+        
+        # Legacy statistics tracking (for backwards compatibility)
         self.stats = {
             "total_files": 0,
             "manifest_files": 0,
@@ -429,28 +665,35 @@ class RAGPipeline:
             
             # Generate embeddings for the chunks
             embedded_chunks = []
-            for chunk in token_safe_chunks:
-                try:
-                    # Generate embedding for chunk
-                    embedding = self.embedder.create_embedding(chunk["content"])
-                    
-                    # Add embedding to chunk
-                    embedded_chunk = {
-                        "content": chunk["content"],
-                        "metadata": chunk["metadata"],
-                        "embedding": embedding
-                    }
-                    embedded_chunks.append(embedded_chunk)
-                except Exception as e:
-                    logger.error(f"Error generating embedding: {str(e)} - Chunk size: {len(chunk['content'])} chars, ~{self._count_tokens(chunk['content'])} tokens")
-                    # Continue with other chunks
-                    continue
+            with Timer() as t_embed:
+                for chunk in token_safe_chunks:
+                    try:
+                        # Generate embedding for chunk
+                        embedding = self.embedder.create_embedding(chunk["content"])
+                        
+                        # Add embedding to chunk
+                        embedded_chunk = {
+                            "content": chunk["content"],
+                            "metadata": chunk["metadata"],
+                            "embedding": embedding
+                        }
+                        embedded_chunks.append(embedded_chunk)
+                    except Exception as e:
+                        logger.error(f"Error generating embedding: {str(e)} - Chunk size: {len(chunk['content'])} chars, ~{self._count_tokens(chunk['content'])} tokens")
+                        # Continue with other chunks
+                        continue
+            self.metrics.record_operation_time("embedding", t_embed.elapsed)
+            self.metrics.update_embedding_stats(len(token_safe_chunks), t_embed.elapsed)
             
             logger.info(f"Created embeddings for {len(embedded_chunks)} chunks")
             
             # Store chunks in vector database using the correct method
             if embedded_chunks:
-                ids = self.vector_store.add_documents(embedded_chunks)
+                with Timer() as t_store:
+                    ids = self.vector_store.add_documents(embedded_chunks)
+                self.metrics.record_operation_time("storage", t_store.elapsed)
+                self.metrics.update_storage_stats(len(embedded_chunks), t_store.elapsed)
+                
                 doc_ids.extend(ids)
                 total_chunks += len(ids)
                 logger.info(f"Stored {len(ids)} chunks in vector database")
@@ -600,7 +843,8 @@ class RAGPipeline:
             # Stop overall timer and add to stats
             overall_timer.__exit__(None, None, None)
             self.stats["total_time"] = overall_timer.elapsed
-        
+            self.metrics.record_operation_time("total", overall_timer.elapsed)
+            
         # Log performance summary
         self._log_performance_summary()
         
@@ -608,24 +852,26 @@ class RAGPipeline:
     
     def _log_performance_summary(self) -> None:
         """Log a summary of the processing performance."""
-        logger.info("\n" + "="*40)
-        logger.info("PERFORMANCE SUMMARY")
-        logger.info("="*40)
-        logger.info(f"Total processing time: {str(timedelta(seconds=self.stats['total_time']))}")
-        logger.info(f"Total files found: {self.stats['total_files']}")
-        if self.stats.get("skipped_ocr_files", 0) > 0:
-            logger.info(f"Files skipped due to OCR: {self.stats['skipped_ocr_files']}")
-        logger.info(f"Files in manifest: {self.stats['manifest_files']}")
-        logger.info(f"Files in database: {self.stats['database_files']}")
-        logger.info(f"New files: {self.stats['new_files']}")
-        logger.info(f"Successfully processed: {self.stats['successful_files']}")
-        if "failed_files" in self.stats:
-            logger.info(f"Failed to process: {self.stats['failed_files']}")
+        # Sync legacy stats to the metrics collector for backwards compatibility
+        self.metrics.update_file_counts(
+            total=self.stats["total_files"],
+            manifest=self.stats["manifest_files"],
+            database=self.stats["database_files"],
+            new=self.stats["new_files"],
+            skipped_ocr=self.stats["skipped_ocr_files"],
+            successful=self.stats["successful_files"],
+            failed=self.stats.get("failed_files", 0)
+        )
         
-        # Display timing details
-        logger.info("\nTiming Details:")
-        for stage, elapsed in self.stats["timings"].items():
-            logger.info(f"  {stage}: {str(timedelta(seconds=elapsed))}")
+        # Add timing information to metrics
+        for op_name, elapsed in self.stats["timings"].items():
+            self.metrics.record_operation_time(op_name, elapsed)
+        
+        # Get the formatted report from the metrics collector
+        report = self.metrics.get_formatted_report()
+        
+        # Print the report to the console
+        logger.info(report)
         
         # Display completion message
         logger.info("\nDocument processing completed!")
