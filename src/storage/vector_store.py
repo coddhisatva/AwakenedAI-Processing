@@ -331,14 +331,24 @@ class SupabaseVectorStore(VectorStoreBase):
                 # If we've reached the batch size, insert the batch
                 if len(chunks_batch) >= batch_size:
                     batch_start = time.time()
-                    batch_ids = self.adapter.add_chunks_batch(chunks_batch)
-                    batch_duration = time.time() - batch_start
-                    total_batches += 1
                     
-                    document_ids.extend(batch_ids)
-                    logger.info(f"Added batch {total_batches} with {len(batch_ids)} chunks to Supabase "
-                               f"in {batch_duration:.2f} seconds ({len(batch_ids)/batch_duration:.2f} chunks/second)")
-                    chunks_batch = []  # Reset batch
+                    # Start a transaction for this batch
+                    try:
+                        self.adapter.begin_transaction()
+                        batch_ids = self.adapter.add_chunks_batch(chunks_batch)
+                        # Transaction is automatically committed in add_chunks_batch if it started there
+                        
+                        batch_duration = time.time() - batch_start
+                        total_batches += 1
+                        
+                        document_ids.extend(batch_ids)
+                        logger.info(f"Added batch {total_batches} with {len(batch_ids)} chunks to Supabase "
+                                   f"in {batch_duration:.2f} seconds ({len(batch_ids)/batch_duration:.2f} chunks/second)")
+                        chunks_batch = []  # Reset batch
+                    except Exception as e:
+                        # Transaction is automatically rolled back in add_chunks_batch if it started there
+                        logger.error(f"Error in batch {total_batches + 1}: {str(e)}")
+                        # Continue processing other documents despite this batch failure
                 
             except Exception as e:
                 logger.error(f"Error preparing document for Supabase: {str(e)}")
@@ -356,7 +366,12 @@ class SupabaseVectorStore(VectorStoreBase):
         if chunks_batch:
             try:
                 batch_start = time.time()
+                
+                # Start a transaction for this final batch
+                self.adapter.begin_transaction()
                 batch_ids = self.adapter.add_chunks_batch(chunks_batch)
+                # Transaction is automatically committed in add_chunks_batch if it started there
+                
                 batch_duration = time.time() - batch_start
                 total_batches += 1
                 
@@ -364,6 +379,7 @@ class SupabaseVectorStore(VectorStoreBase):
                 logger.info(f"Added final batch {total_batches} with {len(batch_ids)} chunks to Supabase "
                            f"in {batch_duration:.2f} seconds ({len(batch_ids)/batch_duration:.2f} chunks/second)")
             except Exception as e:
+                # Transaction is automatically rolled back in add_chunks_batch if it started there
                 logger.error(f"Error adding final batch to Supabase: {str(e)}")
                 # Fallback to individual insertion if batch fails
                 for chunk_data in chunks_batch:

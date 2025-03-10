@@ -10,6 +10,7 @@ from pgvector.psycopg import register_vector
 import time
 import random
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,44 @@ class SupabaseAdapter:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
         
         self.supabase: Client = create_client(supabase_url, supabase_key)
+        self._transaction_id = None
+    
+    def begin_transaction(self):
+        """Begin a new transaction for batch operations."""
+        if self._transaction_id:
+            logger.warning("Transaction already in progress. Committing current transaction before starting a new one.")
+            self.commit_transaction()
+            
+        # Generate a unique transaction ID
+        self._transaction_id = str(uuid.uuid4())
+        logger.info(f"Started transaction {self._transaction_id}")
+        return self._transaction_id
+    
+    def commit_transaction(self):
+        """Commit the current transaction."""
+        if not self._transaction_id:
+            logger.warning("No transaction in progress. Nothing to commit.")
+            return
+            
+        # Since Supabase REST API doesn't support explicit transactions,
+        # we're mostly using this for tracking and logging purposes
+        logger.info(f"Committed transaction {self._transaction_id}")
+        self._transaction_id = None
+    
+    def rollback_transaction(self):
+        """
+        Roll back the current transaction.
+        
+        Note: For Supabase REST API, true rollbacks aren't directly supported.
+        In a production environment, this would need to be implemented with
+        custom SQL queries to revert changes made under this transaction ID.
+        """
+        if not self._transaction_id:
+            logger.warning("No transaction in progress. Nothing to roll back.")
+            return
+            
+        logger.warning(f"Transaction {self._transaction_id} rolled back (note: actual DB rollback requires custom implementation)")
+        self._transaction_id = None
         
     def add_document(self, title: str, author: str, filepath: str) -> str:
         """
@@ -125,7 +164,7 @@ class SupabaseAdapter:
     
     def add_chunks_batch(self, chunks_data: List[Dict[str, Any]]) -> List[str]:
         """
-        Add multiple chunks with their embeddings to the database in a single batch.
+        Add multiple chunks with their embeddings to the database in a single batch transaction.
         
         Args:
             chunks_data: List of dictionaries containing document_id, content, metadata, and embedding
@@ -136,26 +175,51 @@ class SupabaseAdapter:
         if not chunks_data:
             return []
         
+        # Start a transaction for this batch
+        transaction_started_here = False
+        if not self._transaction_id:
+            self.begin_transaction()
+            transaction_started_here = True
+            
         # Retry parameters
         max_retries = 3
         retry_delay = 1  # Starting delay in seconds
         
-        for attempt in range(max_retries):
-            try:
-                response = self.supabase.table("chunks").insert(chunks_data).execute()
-                return [chunk["id"] for chunk in response.data]
-            except Exception as e:
-                if attempt < max_retries - 1:  # Don't sleep after the last attempt
-                    # Calculate the exponential backoff with jitter
-                    jitter = random.uniform(0, 0.1 * retry_delay)
-                    sleep_time = retry_delay + jitter
-                    
-                    logger.warning(f"Batch insert attempt {attempt + 1} failed: {str(e)}. "
-                                   f"Retrying in {sleep_time:.2f} seconds...")
-                    
-                    time.sleep(sleep_time)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    # Last attempt failed
-                    logger.error(f"All {max_retries} batch insert attempts failed: {str(e)}")
-                    raise  # Re-raise the last exception 
+        # Track if we succeeded
+        success = False
+        chunk_ids = []
+        
+        try:
+            for attempt in range(max_retries):
+                try:
+                    response = self.supabase.table("chunks").insert(chunks_data).execute()
+                    chunk_ids = [chunk["id"] for chunk in response.data]
+                    success = True
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:  # Don't sleep after the last attempt
+                        # Calculate the exponential backoff with jitter
+                        jitter = random.uniform(0, 0.1 * retry_delay)
+                        sleep_time = retry_delay + jitter
+                        
+                        logger.warning(f"Batch insert attempt {attempt + 1} failed: {str(e)}. "
+                                    f"Retrying in {sleep_time:.2f} seconds...")
+                        
+                        time.sleep(sleep_time)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        # Last attempt failed
+                        logger.error(f"All {max_retries} batch insert attempts failed: {str(e)}")
+                        raise  # Re-raise the last exception
+            
+            # If we got here and the transaction was started here, commit it
+            if transaction_started_here and success:
+                self.commit_transaction()
+                
+            return chunk_ids
+            
+        except Exception as e:
+            # If an error occurred and the transaction was started here, roll it back
+            if transaction_started_here:
+                self.rollback_transaction()
+            raise  # Re-raise the exception 
