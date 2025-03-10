@@ -7,6 +7,11 @@ from dotenv import load_dotenv
 import numpy as np
 from supabase import create_client, Client
 from pgvector.psycopg import register_vector
+import time
+import random
+import logging
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -116,4 +121,41 @@ class SupabaseAdapter:
         response = self.supabase.table("chunks").select("*").eq("id", chunk_id).execute()
         if response.data:
             return response.data[0]
-        return None 
+        return None
+    
+    def add_chunks_batch(self, chunks_data: List[Dict[str, Any]]) -> List[str]:
+        """
+        Add multiple chunks with their embeddings to the database in a single batch.
+        
+        Args:
+            chunks_data: List of dictionaries containing document_id, content, metadata, and embedding
+                
+        Returns:
+            List of chunk IDs
+        """
+        if not chunks_data:
+            return []
+        
+        # Retry parameters
+        max_retries = 3
+        retry_delay = 1  # Starting delay in seconds
+        
+        for attempt in range(max_retries):
+            try:
+                response = self.supabase.table("chunks").insert(chunks_data).execute()
+                return [chunk["id"] for chunk in response.data]
+            except Exception as e:
+                if attempt < max_retries - 1:  # Don't sleep after the last attempt
+                    # Calculate the exponential backoff with jitter
+                    jitter = random.uniform(0, 0.1 * retry_delay)
+                    sleep_time = retry_delay + jitter
+                    
+                    logger.warning(f"Batch insert attempt {attempt + 1} failed: {str(e)}. "
+                                   f"Retrying in {sleep_time:.2f} seconds...")
+                    
+                    time.sleep(sleep_time)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    # Last attempt failed
+                    logger.error(f"All {max_retries} batch insert attempts failed: {str(e)}")
+                    raise  # Re-raise the last exception 

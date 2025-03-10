@@ -8,6 +8,7 @@ import chromadb
 from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
 import sys
+import time
 
 # Add import for SupabaseAdapter
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -247,6 +248,14 @@ class SupabaseVectorStore(VectorStoreBase):
             return []
         
         document_ids = []
+        batch_size = 200  # Optimal batch size from strategy document
+        chunks_batch = []
+        total_docs = len(documents)
+        processed_docs = 0
+        start_time = time.time()
+        total_batches = 0
+        
+        logger.info(f"Starting batch insertion process for {total_docs} documents with batch size {batch_size}")
         
         # Check if we need to generate embeddings
         need_embeddings = False
@@ -311,20 +320,65 @@ class SupabaseVectorStore(VectorStoreBase):
                         filepath=filepath
                     )
                 
-                # Add the chunk with its embedding
-                chunk_id = self.adapter.add_chunk(
-                    document_id=doc_id,
-                    content=content,
-                    metadata=metadata,
-                    embedding=embedding
-                )
+                # Instead of adding the chunk immediately, add it to our batch
+                chunks_batch.append({
+                    "document_id": doc_id,
+                    "content": content,
+                    "metadata": metadata,
+                    "embedding": embedding
+                })
                 
-                document_ids.append(chunk_id)
+                # If we've reached the batch size, insert the batch
+                if len(chunks_batch) >= batch_size:
+                    batch_start = time.time()
+                    batch_ids = self.adapter.add_chunks_batch(chunks_batch)
+                    batch_duration = time.time() - batch_start
+                    total_batches += 1
+                    
+                    document_ids.extend(batch_ids)
+                    logger.info(f"Added batch {total_batches} with {len(batch_ids)} chunks to Supabase "
+                               f"in {batch_duration:.2f} seconds ({len(batch_ids)/batch_duration:.2f} chunks/second)")
+                    chunks_batch = []  # Reset batch
                 
             except Exception as e:
-                logger.error(f"Error adding document to Supabase: {str(e)}")
+                logger.error(f"Error preparing document for Supabase: {str(e)}")
+            
+            # Update progress
+            processed_docs += 1
+            if processed_docs % 10 == 0 or processed_docs == total_docs:
+                elapsed = time.time() - start_time
+                docs_per_second = processed_docs / elapsed if elapsed > 0 else 0
+                logger.info(f"Progress: {processed_docs}/{total_docs} documents processed "
+                           f"({processed_docs/total_docs*100:.1f}%) - "
+                           f"{docs_per_second:.2f} docs/second")
         
-        logger.info(f"Added {len(document_ids)} chunks to Supabase")
+        # Insert any remaining chunks
+        if chunks_batch:
+            try:
+                batch_start = time.time()
+                batch_ids = self.adapter.add_chunks_batch(chunks_batch)
+                batch_duration = time.time() - batch_start
+                total_batches += 1
+                
+                document_ids.extend(batch_ids)
+                logger.info(f"Added final batch {total_batches} with {len(batch_ids)} chunks to Supabase "
+                           f"in {batch_duration:.2f} seconds ({len(batch_ids)/batch_duration:.2f} chunks/second)")
+            except Exception as e:
+                logger.error(f"Error adding final batch to Supabase: {str(e)}")
+                # Fallback to individual insertion if batch fails
+                for chunk_data in chunks_batch:
+                    try:
+                        chunk_id = self.adapter.add_chunk(
+                            document_id=chunk_data["document_id"],
+                            content=chunk_data["content"],
+                            metadata=chunk_data["metadata"],
+                            embedding=chunk_data["embedding"]
+                        )
+                        document_ids.append(chunk_id)
+                    except Exception as inner_e:
+                        logger.error(f"Error adding individual chunk to Supabase: {str(inner_e)}")
+        
+        logger.info(f"Added a total of {len(document_ids)} chunks to Supabase")
         return document_ids
     
     def search(self, query: str, k: int = 5, filter_dict: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:

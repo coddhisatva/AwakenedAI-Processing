@@ -21,6 +21,7 @@ langchain-openai>=0.0.2
 
 # OpenAI
 openai>=1.0.0
+tiktoken>=0.5.0
 
 # UI/CLI
 rich>=13.0.0
