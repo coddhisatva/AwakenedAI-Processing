@@ -427,26 +427,14 @@ class RAGPipeline:
             if len(token_safe_chunks) > len(all_chunks):
                 logger.info(f"Split {len(all_chunks)} chunks into {len(token_safe_chunks)} smaller chunks to comply with token limits")
             
-            # Generate embeddings for the chunks
-            embedded_chunks = []
-            for chunk in token_safe_chunks:
-                try:
-                    # Generate embedding for chunk
-                    embedding = self.embedder.create_embedding(chunk["content"])
-                    
-                    # Add embedding to chunk
-                    embedded_chunk = {
-                        "content": chunk["content"],
-                        "metadata": chunk["metadata"],
-                        "embedding": embedding
-                    }
-                    embedded_chunks.append(embedded_chunk)
-                except Exception as e:
-                    logger.error(f"Error generating embedding: {str(e)} - Chunk size: {len(chunk['content'])} chars, ~{self._count_tokens(chunk['content'])} tokens")
-                    # Continue with other chunks
-                    continue
-            
-            logger.info(f"Created embeddings for {len(embedded_chunks)} chunks")
+            # Generate embeddings for the chunks using batch processing
+            try:
+                # Use the batch embedding method to process all chunks at once
+                embedded_chunks = self.embedder.create_embeddings(token_safe_chunks)
+                logger.info(f"Created embeddings for {len(embedded_chunks)} chunks using batch processing")
+            except Exception as e:
+                logger.error(f"Error generating embeddings: {str(e)}")
+                embedded_chunks = []
             
             # Store chunks in vector database using the correct method
             if embedded_chunks:

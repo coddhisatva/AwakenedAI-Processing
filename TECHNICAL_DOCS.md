@@ -57,14 +57,21 @@ Raw Documents → Text Extraction → Semantic Chunking → Embedding Generation
 
 3. **Document Embedder** (`src/embedding/embedder.py`)
    - Generates vector embeddings for each chunk using OpenAI's embedding models
-   - Handles API rate limiting and retries
-   - Stores embeddings with chunk metadata
-   - Supports single-text embedding for queries
+   - Implements optimized batch processing with recommended batch size of 500 items
+   - Advanced token management to stay within OpenAI limits
+   - Rate limiting detection and self-throttling to avoid API rate limits
+   - Automatic adjustment of batch sizes based on token limits
+   - Sophisticated retry logic with exponential backoff and error handling
+   - Detailed performance monitoring and statistics
+   - Supports both file-based processing and in-memory processing
 
 4. **Vector Database** (`src/storage/vector_store.py`)
    - Stores embeddings and metadata for efficient retrieval
    - Supports semantic search capabilities
    - Implemented with Supabase's pgvector extension
+   - Uses batch insertion with optimal batch size of 200 items
+   - Error resilience with retry logic and exponential backoff
+   - Performance monitoring for insertion rates
    - Abstract interface allows for different backends
 
 ### 2. RAG System
@@ -540,8 +547,14 @@ The LLM integration provides AI-generated responses based on retrieved context:
 - ✅ Skip processing for already processed documents
 - ✅ Semantic chunking is implemented and fully tested
 - ✅ Embedding generation is implemented and fully tested
-- ✅ Migration from ChromaDB to Supabase is complete
+  - ✅ Optimized batch processing with token limit management
+  - ✅ Advanced rate limit handling with self-throttling
+  - ✅ Performance monitoring with detailed statistics
 - ✅ Vector database implementation with Supabase is complete and tested
+  - ✅ Efficient batch insertion for improved performance
+  - ✅ Retry logic with exponential backoff for resilience
+  - ✅ Performance monitoring for insertion metrics
+- ✅ Migration from ChromaDB to Supabase is complete
 - ✅ End-to-end pipeline is functional and verified:
   - Successfully processed multiple documents through the entire pipeline
   - Extracted text from PDFs and EPUBs, generated semantic chunks, created embeddings, and stored in Supabase
@@ -558,6 +571,11 @@ The LLM integration provides AI-generated responses based on retrieved context:
   - Consolidated all functionality into the RAGPipeline class
   - Added direct CLI functionality to the RAGPipeline
   - Added OCR skipping with `--skip_ocr` flag
+- ✅ Performance optimizations for large-scale processing:
+  - Implemented batched chunk insertion for Supabase
+  - Implemented batched embedding generation
+  - Added error resilience and retry mechanisms
+  - Enhanced monitoring and metrics for performance tuning
 
 ## Scaling Considerations
 

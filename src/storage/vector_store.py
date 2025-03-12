@@ -275,11 +275,25 @@ class SupabaseVectorStore(VectorStoreBase):
                 embeddings_dir=str(embeddings_dir)
             )
             
-            # Create embeddings for each document without one
-            for doc in documents:
-                if "embedding" not in doc or not doc["embedding"]:
+            # Extract documents that need embeddings
+            docs_needing_embeddings = [doc for doc in documents if "embedding" not in doc or not doc["embedding"]]
+            
+            if docs_needing_embeddings:
+                logger.info(f"Generating embeddings for {len(docs_needing_embeddings)} documents using batch processing")
+                
+                # Use batch embedding to generate all embeddings at once
+                embedded_docs = embedder.create_embeddings(docs_needing_embeddings)
+                
+                # Update original documents with embeddings
+                embedding_map = {
+                    doc["content"] if "content" in doc else doc["text"]: doc["embedding"] 
+                    for doc in embedded_docs
+                }
+                
+                for doc in documents:
                     content = doc.get("content", doc.get("text", ""))
-                    doc["embedding"] = embedder.create_embedding(content)
+                    if content in embedding_map:
+                        doc["embedding"] = embedding_map[content]
         
         # Organize documents by source filepath to group by document
         docs_by_filepath = {}
@@ -405,7 +419,14 @@ class SupabaseVectorStore(VectorStoreBase):
         
         # Generate embedding for the query
         embedder = DocumentEmbedder(chunks_dir=str(chunks_dir), embeddings_dir=str(embeddings_dir))
-        query_embedding = embedder.create_embedding(query)
+        
+        # Use batch embedding method to keep code consistent
+        query_embeddings = embedder.create_embeddings_batch([query])
+        if query_embeddings:
+            query_embedding = query_embeddings[0]
+        else:
+            logger.error("Failed to create query embedding")
+            return []
         
         # Search using the query embedding
         results = self.adapter.search(query_embedding=query_embedding, limit=k)
