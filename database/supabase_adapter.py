@@ -2,11 +2,18 @@
 Supabase adapter for vector storage and retrieval.
 """
 import os
+import time
+import random
+import logging
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 import numpy as np
 from supabase import create_client, Client
 from pgvector.psycopg import register_vector
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -43,27 +50,62 @@ class SupabaseAdapter:
         
         return response.data[0]["id"]
     
-    def add_chunk(self, document_id: str, content: str, metadata: Dict[str, Any], embedding: List[float]) -> str:
+    def add_chunks_batch(self, chunks: List[Dict[str, Any]]) -> List[str]:
         """
-        Add a chunk with its embedding to the database.
+        Add multiple chunks with their embeddings to the database in a single batch operation.
         
         Args:
-            document_id: The document ID this chunk belongs to
-            content: The text content of the chunk
-            metadata: Metadata associated with the chunk
-            embedding: Vector embedding of the chunk
+            chunks: List of chunk dictionaries, each containing:
+                - document_id: The document ID this chunk belongs to
+                - content: The text content of the chunk
+                - metadata: Metadata associated with the chunk
+                - embedding: Vector embedding of the chunk
             
         Returns:
-            The chunk ID
+            List of chunk IDs
         """
-        response = self.supabase.table("chunks").insert({
-            "document_id": document_id,
-            "content": content,
-            "metadata": metadata,
-            "embedding": embedding
-        }).execute()
+        if not chunks:
+            return []
         
-        return response.data[0]["id"]
+        # Prepare the data for insertion
+        chunk_data = []
+        for chunk in chunks:
+            chunk_data.append({
+                "document_id": chunk["document_id"],
+                "content": chunk["content"],
+                "metadata": chunk["metadata"],
+                "embedding": chunk["embedding"]
+            })
+        
+        # Implement retry with exponential backoff
+        max_retries = 5
+        base_delay = 1  # starting delay in seconds
+        chunk_ids = []
+        
+        for attempt in range(max_retries):
+            try:
+                # Execute batch insert with transaction
+                response = self.supabase.table("chunks").insert(chunk_data).execute()
+                
+                # Extract the IDs
+                chunk_ids = [item["id"] for item in response.data]
+                
+                # If successful, break the retry loop
+                break
+                
+            except Exception as e:
+                # Calculate delay with exponential backoff and some randomness
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                
+                # If this is the final attempt, re-raise the exception
+                if attempt == max_retries - 1:
+                    logger.error(f"Failed to insert batch after {max_retries} attempts: {str(e)}")
+                    raise
+                
+                logger.warning(f"Batch insert attempt {attempt+1} failed: {str(e)}. Retrying in {delay:.2f} seconds...")
+                time.sleep(delay)
+        
+        return chunk_ids
     
     def search(self, query_embedding: List[float], limit: int = 5) -> List[Dict[str, Any]]:
         """
