@@ -2,10 +2,19 @@ import os
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 import nltk
 from nltk.tokenize import sent_tokenize
+
+# Allow importing the metrics framework
+try:
+    from src.pipeline.metrics import PipelineMetrics, PhaseTimer
+except ImportError:
+    # For when the chunker is used standalone
+    PipelineMetrics = None
+    PhaseTimer = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,7 +40,8 @@ class SemanticChunker:
         chunks_dir: str,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
-        min_chunk_size: int = 100
+        min_chunk_size: int = 100,
+        unified_metrics: Optional[PipelineMetrics] = None
     ):
         """
         Initialize the semantic chunker.
@@ -42,6 +52,7 @@ class SemanticChunker:
             chunk_size: Target size of each chunk in characters
             chunk_overlap: Overlap between chunks in characters
             min_chunk_size: Minimum chunk size to keep
+            unified_metrics: Optional unified metrics object for integration with the pipeline
         """
         self.processed_dir = Path(processed_dir)
         self.chunks_dir = Path(chunks_dir)
@@ -51,12 +62,16 @@ class SemanticChunker:
         self.chunk_overlap = chunk_overlap
         self.min_chunk_size = min_chunk_size
         
+        # Store the unified metrics
+        self.unified_metrics = unified_metrics
+        
         # Track processing statistics
         self.stats = {
             "total_documents": 0,
             "successful_documents": 0,
             "failed_documents": 0,
-            "total_chunks": 0
+            "total_chunks": 0,
+            "chunking_time": 0
         }
     
     def chunk_all_documents(self) -> Dict[str, Any]:
@@ -68,28 +83,66 @@ class SemanticChunker:
         """
         logger.info(f"Starting chunking of documents from {self.processed_dir}")
         
-        # Find all JSON files
-        json_files = list(self.processed_dir.glob("**/*.json"))
-        logger.info(f"Found {len(json_files)} processed documents")
+        # Use a PhaseTimer if unified metrics are available
+        timer_context = (
+            PhaseTimer("Chunking all documents", self.unified_metrics, phase="chunking")
+            if self.unified_metrics and PhaseTimer
+            else None
+        )
         
-        # Process each file
-        for file_path in json_files:
-            self.stats["total_documents"] += 1
-            try:
-                # Skip book_metadata.csv if it exists
-                if file_path.name == "book_metadata.csv":
-                    continue
+        # Start overall timing
+        start_time = time.time()
+        if timer_context:
+            timer_context.__enter__()
+        
+        try:
+            # Find all JSON files
+            json_files = list(self.processed_dir.glob("**/*.json"))
+            logger.info(f"Found {len(json_files)} processed documents")
+            
+            # Process each file
+            for file_path in json_files:
+                self.stats["total_documents"] += 1
+                if self.unified_metrics:
+                    self.unified_metrics.increment("chunking", "documents_processed")
+                
+                try:
+                    # Skip book_metadata.csv if it exists
+                    if file_path.name == "book_metadata.csv":
+                        continue
+                        
+                    num_chunks = self._chunk_document(file_path)
+                    self.stats["successful_documents"] += 1
+                    self.stats["total_chunks"] += num_chunks
                     
-                num_chunks = self._chunk_document(file_path)
-                self.stats["successful_documents"] += 1
-                self.stats["total_chunks"] += num_chunks
-                logger.info(f"Successfully chunked {file_path.name} into {num_chunks} chunks")
-            except Exception as e:
-                self.stats["failed_documents"] += 1
-                logger.error(f"Failed to chunk {file_path}: {str(e)}")
-        
-        logger.info(f"Chunking complete. Processed {self.stats['successful_documents']} documents successfully, {self.stats['failed_documents']} failed. Created {self.stats['total_chunks']} total chunks.")
-        return self.stats
+                    if self.unified_metrics:
+                        self.unified_metrics.increment("chunking", "successful_documents")
+                        self.unified_metrics.increment("chunking", "chunks_created", num_chunks)
+                    
+                    logger.info(f"Successfully chunked {file_path.name} into {num_chunks} chunks")
+                except Exception as e:
+                    self.stats["failed_documents"] += 1
+                    if self.unified_metrics:
+                        self.unified_metrics.increment("chunking", "failed_documents")
+                    
+                    logger.error(f"Failed to chunk {file_path}: {str(e)}")
+            
+            # Calculate total chunking time
+            self.stats["chunking_time"] = time.time() - start_time
+            
+            # Calculate throughput
+            if self.stats["chunking_time"] > 0:
+                chunks_per_second = self.stats["total_chunks"] / self.stats["chunking_time"]
+                if self.unified_metrics:
+                    self.unified_metrics.update("chunking", "throughput", chunks_per_second)
+            
+            logger.info(f"Chunking complete. Processed {self.stats['successful_documents']} documents successfully, {self.stats['failed_documents']} failed. Created {self.stats['total_chunks']} total chunks.")
+            return self.stats
+            
+        finally:
+            # Close the timer if we created one
+            if timer_context:
+                timer_context.__exit__(None, None, None)
     
     def _chunk_document(self, file_path: Path) -> int:
         """
@@ -101,29 +154,44 @@ class SemanticChunker:
         Returns:
             Number of chunks created
         """
-        # Load the processed document
-        with open(file_path, 'r', encoding='utf-8') as f:
-            document = json.load(f)
+        # Create a timer for this document if using unified metrics
+        timer_context = (
+            PhaseTimer(f"Chunking {file_path.name}", self.unified_metrics, phase="chunking")
+            if self.unified_metrics and PhaseTimer
+            else None
+        )
         
-        # Extract content and metadata
-        content = document.get("content", "")
-        metadata = document.get("metadata", {})
-        
-        if not content:
-            logger.warning(f"No content found in {file_path}")
-            return 0
-        
-        # Split the content into sentences
-        sentences = self._split_into_sentences(content)
-        
-        # Create chunks from sentences
-        chunks = self._create_chunks_from_sentences(sentences, metadata)
-        
-        # Save chunks to file
-        output_path = self.chunks_dir / f"{file_path.stem}_chunks.json"
-        self._save_chunks(output_path, chunks)
-        
-        return len(chunks)
+        if timer_context:
+            timer_context.__enter__()
+            
+        try:
+            # Load the processed document
+            with open(file_path, 'r', encoding='utf-8') as f:
+                document = json.load(f)
+            
+            # Extract content and metadata
+            content = document.get("content", "")
+            metadata = document.get("metadata", {})
+            
+            if not content:
+                logger.warning(f"No content found in {file_path}")
+                return 0
+            
+            # Split the content into sentences
+            sentences = self._split_into_sentences(content)
+            
+            # Create chunks from sentences
+            chunks = self._create_chunks_from_sentences(sentences, metadata)
+            
+            # Save chunks to file
+            output_path = self.chunks_dir / f"{file_path.stem}_chunks.json"
+            self._save_chunks(output_path, chunks)
+            
+            return len(chunks)
+        finally:
+            # Close the timer if we created one
+            if timer_context:
+                timer_context.__exit__(None, None, None)
     
     def _split_into_sentences(self, text: str) -> List[str]:
         """
@@ -151,7 +219,7 @@ class SemanticChunker:
     
     def _clean_text(self, text: str) -> str:
         """
-        Clean text by removing extra whitespace and normalizing.
+        Clean the text for better sentence splitting.
         
         Args:
             text: Text to clean
@@ -163,67 +231,56 @@ class SemanticChunker:
         text = re.sub(r'\n+', '\n', text)
         
         # Replace multiple spaces with a single one
-        text = re.sub(r' +', ' ', text)
-        
-        # Strip whitespace
-        text = text.strip()
+        text = re.sub(r'\s+', ' ', text)
         
         return text
     
-    def _create_chunks_from_sentences(
-        self, 
-        sentences: List[str], 
-        metadata: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+    def _create_chunks_from_sentences(self, sentences: List[str], doc_metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Create chunks from sentences with overlap.
+        Create semantic chunks from a list of sentences.
         
         Args:
             sentences: List of sentences
-            metadata: Document metadata
+            doc_metadata: Document metadata
             
         Returns:
             List of chunks with metadata
         """
+        if not sentences:
+            return []
+            
         chunks = []
         current_chunk = []
-        current_size = 0
+        current_chunk_size = 0
         
         for sentence in sentences:
-            sentence_size = len(sentence)
+            sentence_length = len(sentence)
             
-            # If adding this sentence would exceed the chunk size and we already have content,
-            # save the current chunk and start a new one with overlap
-            if current_size + sentence_size > self.chunk_size and current_chunk:
-                # Create chunk with metadata
+            # If adding this sentence would exceed the chunk size and we already have content
+            if current_chunk_size + sentence_length > self.chunk_size and current_chunk:
+                # Save the current chunk
                 chunk_text = " ".join(current_chunk)
-                chunk = self._create_chunk_with_metadata(chunk_text, metadata, len(chunks) + 1)
-                chunks.append(chunk)
+                if len(chunk_text) >= self.min_chunk_size:
+                    chunks.append(self._create_chunk_with_metadata(chunk_text, doc_metadata, len(chunks)))
                 
-                # Start new chunk with overlap
-                overlap_size = 0
-                overlap_chunk = []
-                
-                # Add sentences from the end of the previous chunk for overlap
-                for s in reversed(current_chunk):
-                    if overlap_size + len(s) <= self.chunk_overlap:
-                        overlap_chunk.insert(0, s)
-                        overlap_size += len(s) + 1  # +1 for space
-                    else:
-                        break
-                
-                current_chunk = overlap_chunk
-                current_size = overlap_size
+                # Start a new chunk with overlap
+                overlap_start = max(0, len(current_chunk) - int(self.chunk_overlap / (sentence_length + 1)))
+                current_chunk = current_chunk[overlap_start:]
+                current_chunk_size = sum(len(s) for s in current_chunk) + len(current_chunk) - 1  # Include spaces
             
-            # Add the current sentence to the chunk
+            # Add the sentence to the current chunk
             current_chunk.append(sentence)
-            current_size += sentence_size + 1  # +1 for space
+            current_chunk_size += sentence_length + 1  # +1 for the space
         
-        # Add the last chunk if it's not empty and meets minimum size
-        if current_chunk and current_size >= self.min_chunk_size:
+        # Don't forget the last chunk
+        if current_chunk:
             chunk_text = " ".join(current_chunk)
-            chunk = self._create_chunk_with_metadata(chunk_text, metadata, len(chunks) + 1)
-            chunks.append(chunk)
+            if len(chunk_text) >= self.min_chunk_size:
+                chunks.append(self._create_chunk_with_metadata(chunk_text, doc_metadata, len(chunks)))
+        
+        # Update metrics
+        if self.unified_metrics:
+            self.unified_metrics.increment("chunking", "chunks_created", len(chunks))
         
         return chunks
     

@@ -9,6 +9,14 @@ import tiktoken
 import openai
 from dotenv import load_dotenv
 
+# Allow importing the metrics framework
+try:
+    from src.pipeline.metrics import PipelineMetrics, PhaseTimer
+except ImportError:
+    # For when the embedder is used standalone
+    PipelineMetrics = None
+    PhaseTimer = None
+
 # Load environment variables
 load_dotenv()
 
@@ -32,7 +40,8 @@ class DocumentEmbedder:
         batch_size: int = 500,  # Increased as per batch strategy
         max_retries: int = 5,
         retry_delay: int = 5,
-        max_tokens_per_batch: int = 8000  # Just below the 8,191 token limit
+        max_tokens_per_batch: int = 8000,  # Just below the 8,191 token limit
+        unified_metrics: Optional[PipelineMetrics] = None
     ):
         """
         Initialize the document embedder.
@@ -45,6 +54,7 @@ class DocumentEmbedder:
             max_retries: Maximum number of retries for API calls
             retry_delay: Base delay between retries in seconds
             max_tokens_per_batch: Maximum number of tokens allowed in a batch
+            unified_metrics: Optional unified metrics object for integration with the pipeline
         """
         self.chunks_dir = Path(chunks_dir)
         self.embeddings_dir = Path(embeddings_dir)
@@ -55,6 +65,9 @@ class DocumentEmbedder:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.max_tokens_per_batch = max_tokens_per_batch
+        
+        # Store unified metrics if provided
+        self.unified_metrics = unified_metrics
         
         # Initialize token counter
         if "ada" in embedding_model:
@@ -104,6 +117,10 @@ class DocumentEmbedder:
         total_tokens = sum(len(self.tokenizer.encode(text)) for text in texts)
         self.stats["tokens_processed"] += total_tokens
         
+        # Update unified metrics if available
+        if self.unified_metrics:
+            self.unified_metrics.increment("embedding", "tokens_processed", total_tokens)
+        
         # Self-throttle if needed
         self._respect_rate_limits()
         
@@ -114,6 +131,9 @@ class DocumentEmbedder:
         for attempt in range(self.max_retries):
             try:
                 self.stats["api_calls"] += 1
+                if self.unified_metrics:
+                    self.unified_metrics.increment("embedding", "api_calls")
+                    
                 self.last_minute_requests.append(time.time())
                 
                 # Call OpenAI API to generate embeddings
@@ -136,6 +156,11 @@ class DocumentEmbedder:
                     / self.stats["total_batches"]
                 )
                 
+                # Update unified metrics if available
+                if self.unified_metrics:
+                    self.unified_metrics.increment("embedding", "total_batches")
+                    self.unified_metrics.update("embedding", "avg_batch_size", self.stats["average_batch_size"])
+                
                 # Log performance metrics
                 embeddings_per_second = len(embeddings) / embedding_time if embedding_time > 0 else 0
                 tokens_per_second = total_tokens / embedding_time if embedding_time > 0 else 0
@@ -145,6 +170,9 @@ class DocumentEmbedder:
                 
             except Exception as e:
                 self.stats["api_errors"] += 1
+                if self.unified_metrics:
+                    self.unified_metrics.increment("embedding", "api_errors")
+                    
                 error_message = str(e).lower()
                 
                 # Add specific handling for different error types
@@ -202,36 +230,62 @@ class DocumentEmbedder:
             
         logger.info(f"Creating embeddings for {len(chunks)} chunks using batching")
         
-        # Sort chunks by token count to optimize batch composition
-        chunks_with_tokens = self._count_tokens_for_chunks(chunks)
-        chunks_with_tokens.sort(key=lambda x: x[1])  # Sort by token count
+        # Use a PhaseTimer if unified metrics are available
+        timer_context = (
+            PhaseTimer("Batch embedding", self.unified_metrics, phase="embedding")
+            if self.unified_metrics and PhaseTimer
+            else None
+        )
         
-        # Group chunks into batches that respect token limits
-        batches = self._create_token_efficient_batches(chunks_with_tokens)
-        logger.info(f"Divided {len(chunks)} chunks into {len(batches)} batches based on token limits")
+        # Track timing for performance metrics
+        if timer_context:
+            timer_context.__enter__()
         
-        # Process each batch
-        embedded_chunks = []
-        for i, batch in enumerate(batches):
-            batch_chunks = [chunk for chunk, _ in batch]
-            batch_texts = [chunk["content"] for chunk in batch_chunks]
+        try:
+            # Sort chunks by token count to optimize batch composition
+            chunks_with_tokens = self._count_tokens_for_chunks(chunks)
+            chunks_with_tokens.sort(key=lambda x: x[1])  # Sort by token count
             
-            try:
-                # Get embeddings for the batch
-                batch_embeddings = self.create_embeddings_batch(batch_texts)
+            # Group chunks into batches that respect token limits
+            batches = self._create_token_efficient_batches(chunks_with_tokens)
+            logger.info(f"Divided {len(chunks)} chunks into {len(batches)} batches based on token limits")
+            
+            # Process each batch
+            embedded_chunks = []
+            for i, batch in enumerate(batches):
+                batch_chunks = [chunk for chunk, _ in batch]
+                batch_texts = [chunk["content"] for chunk in batch_chunks]
                 
-                # Add embeddings to chunks
-                for j, chunk in enumerate(batch_chunks):
-                    embedded_chunk = chunk.copy()
-                    embedded_chunk["embedding"] = batch_embeddings[j]
-                    embedded_chunks.append(embedded_chunk)
+                try:
+                    # Get embeddings for the batch
+                    batch_embeddings = self.create_embeddings_batch(batch_texts)
                     
-            except Exception as e:
-                logger.error(f"Error processing batch {i+1}/{len(batches)}: {str(e)}")
-                # Continue with other batches
-        
-        logger.info(f"Successfully created embeddings for {len(embedded_chunks)}/{len(chunks)} chunks")
-        return embedded_chunks
+                    # Add embeddings to chunks
+                    for j, chunk in enumerate(batch_chunks):
+                        embedded_chunk = chunk.copy()
+                        embedded_chunk["embedding"] = batch_embeddings[j]
+                        embedded_chunks.append(embedded_chunk)
+                        
+                        # Update per-chunk stats
+                        self.stats["successful_chunks"] += 1
+                        if self.unified_metrics:
+                            self.unified_metrics.increment("embedding", "successful_chunks")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing batch {i+1}/{len(batches)}: {str(e)}")
+                    # Update failed chunk counts
+                    self.stats["failed_chunks"] += len(batch_chunks)
+                    if self.unified_metrics:
+                        self.unified_metrics.increment("embedding", "failed_chunks", len(batch_chunks))
+                    # Continue with other batches
+            
+            logger.info(f"Successfully created embeddings for {len(embedded_chunks)}/{len(chunks)} chunks")
+            return embedded_chunks
+            
+        finally:
+            # Close the timer if we created one
+            if timer_context:
+                timer_context.__exit__(None, None, None)
     
     def embed_documents(self, limit: Optional[int] = None) -> Dict[str, Any]:
         """

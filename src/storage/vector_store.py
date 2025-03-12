@@ -10,6 +10,14 @@ from dotenv import load_dotenv
 import sys
 import time
 
+# Allow importing the metrics framework
+try:
+    from src.pipeline.metrics import PipelineMetrics, PhaseTimer
+except ImportError:
+    # For when the vector store is used standalone
+    PipelineMetrics = None
+    PhaseTimer = None
+
 # Add import for SupabaseAdapter
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from database.supabase_adapter import SupabaseAdapter
@@ -224,10 +232,12 @@ class PineconeVectorStore(VectorStoreBase):
 class SupabaseVectorStore(VectorStoreBase):
     """Supabase implementation of vector store."""
     
-    def __init__(self):
+    def __init__(self, unified_metrics: Optional[PipelineMetrics] = None):
         """Initialize Supabase vector store."""
         try:
             self.adapter = SupabaseAdapter()
+            # Store unified metrics if provided
+            self.unified_metrics = unified_metrics
             logger.info(f"Initialized Supabase vector store")
         except Exception as e:
             logger.error(f"Error initializing Supabase adapter: {str(e)}")
@@ -247,148 +257,195 @@ class SupabaseVectorStore(VectorStoreBase):
             logger.warning("No documents to add to vector store")
             return []
         
-        # Check if we need to generate embeddings
-        need_embeddings = False
-        for doc in documents:
-            if "embedding" not in doc or not doc["embedding"]:
-                need_embeddings = True
-                break
+        # Use a PhaseTimer if unified metrics are available
+        timer_context = (
+            PhaseTimer("Document storage", self.unified_metrics, phase="storage")
+            if self.unified_metrics and PhaseTimer
+            else None
+        )
         
-        # Generate embeddings if needed
-        if need_embeddings:
-            from src.embedding.embedder import DocumentEmbedder
-            import os
-            from pathlib import Path
-            
-            # Set up directories for the embedder
-            data_dir = Path(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"))
-            chunks_dir = data_dir / "chunks"
-            embeddings_dir = data_dir / "embeddings"
-            
-            # Create directories if they don't exist
-            chunks_dir.mkdir(exist_ok=True, parents=True)
-            embeddings_dir.mkdir(exist_ok=True, parents=True)
-            
-            # Initialize embedder
-            embedder = DocumentEmbedder(
-                chunks_dir=str(chunks_dir), 
-                embeddings_dir=str(embeddings_dir)
-            )
-            
-            # Extract documents that need embeddings
-            docs_needing_embeddings = [doc for doc in documents if "embedding" not in doc or not doc["embedding"]]
-            
-            if docs_needing_embeddings:
-                logger.info(f"Generating embeddings for {len(docs_needing_embeddings)} documents using batch processing")
-                
-                # Use batch embedding to generate all embeddings at once
-                embedded_docs = embedder.create_embeddings(docs_needing_embeddings)
-                
-                # Update original documents with embeddings
-                embedding_map = {
-                    doc["content"] if "content" in doc else doc["text"]: doc["embedding"] 
-                    for doc in embedded_docs
-                }
-                
-                for doc in documents:
-                    content = doc.get("content", doc.get("text", ""))
-                    if content in embedding_map:
-                        doc["embedding"] = embedding_map[content]
-        
-        # Organize documents by source filepath to group by document
-        docs_by_filepath = {}
-        for doc in documents:
-            content = doc.get("content", doc.get("text", ""))
-            metadata = doc.get("metadata", {})
-            embedding = doc.get("embedding", [])
-            filepath = metadata.get("source", "")
-            
-            if filepath not in docs_by_filepath:
-                docs_by_filepath[filepath] = {
-                    "title": metadata.get("title", "Unknown"),
-                    "author": metadata.get("author", "Unknown"),
-                    "filepath": filepath,
-                    "chunks": []
-                }
-            
-            docs_by_filepath[filepath]["chunks"].append({
-                "content": content,
-                "metadata": metadata,
-                "embedding": embedding
-            })
-        
-        all_chunk_ids = []
-        max_batch_size = 200  # Recommended batch size for Supabase
+        # Start timing for storage
+        if timer_context:
+            timer_context.__enter__()
         
         try:
-            # Process each document
-            for filepath, doc_info in docs_by_filepath.items():
-                # Check if we already have this document based on filepath
-                doc_id = None
-                if filepath:
-                    existing_doc = self.adapter.get_document_by_filepath(filepath)
-                    if existing_doc:
-                        doc_id = existing_doc["id"]
-                        logger.info(f"Document {filepath} already exists in database, using existing document ID")
-                
-                # Add document if it doesn't exist
-                if doc_id is None:
-                    doc_id = self.adapter.add_document(
-                        title=doc_info["title"],
-                        author=doc_info["author"],
-                        filepath=doc_info["filepath"]
-                    )
-                
-                # Prepare chunks for batch insertion
-                chunks_to_insert = []
-                for chunk in doc_info["chunks"]:
-                    chunks_to_insert.append({
-                        "document_id": doc_id,
-                        "content": chunk["content"],
-                        "metadata": chunk["metadata"],
-                        "embedding": chunk["embedding"]
-                    })
-                
-                # Insert chunks in batches of max_batch_size
-                total_insertion_time = 0
-                total_chunks_inserted = 0
-                
-                for i in range(0, len(chunks_to_insert), max_batch_size):
-                    batch = chunks_to_insert[i:i+max_batch_size]
-                    
-                    # Log batch information
-                    batch_num = i // max_batch_size + 1
-                    total_batches = (len(chunks_to_insert) - 1) // max_batch_size + 1
-                    logger.info(f"Inserting batch {batch_num}/{total_batches} with {len(batch)} chunks for document {doc_info['title']}")
-                    
-                    # Measure insertion time
-                    start_time = time.time()
-                    
-                    # Insert the batch
-                    chunk_ids = self.adapter.add_chunks_batch(batch)
-                    all_chunk_ids.extend(chunk_ids)
-                    
-                    # Calculate metrics
-                    end_time = time.time()
-                    batch_time = end_time - start_time
-                    total_insertion_time += batch_time
-                    total_chunks_inserted += len(chunk_ids)
-                    
-                    chunks_per_second = len(chunk_ids) / batch_time if batch_time > 0 else 0
-                    
-                    logger.info(f"Batch {batch_num}/{total_batches} insertion completed in {batch_time:.2f}s ({chunks_per_second:.2f} chunks/second)")
-                
-                # Log overall performance for this document
-                if total_insertion_time > 0 and total_chunks_inserted > 0:
-                    avg_chunks_per_second = total_chunks_inserted / total_insertion_time
-                    logger.info(f"Document '{doc_info['title']}' processing completed: {total_chunks_inserted} chunks inserted in {total_insertion_time:.2f}s ({avg_chunks_per_second:.2f} chunks/second)")
+            # Check if we need to generate embeddings
+            need_embeddings = False
+            for doc in documents:
+                if "embedding" not in doc or not doc["embedding"]:
+                    need_embeddings = True
+                    break
             
-            logger.info(f"Added {len(all_chunk_ids)} chunks to Supabase using batch insertion")
-            return all_chunk_ids
+            # Generate embeddings if needed
+            if need_embeddings:
+                from src.embedding.embedder import DocumentEmbedder
+                import os
+                from pathlib import Path
+                
+                # Set up directories for the embedder
+                data_dir = Path(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"))
+                chunks_dir = data_dir / "chunks"
+                embeddings_dir = data_dir / "embeddings"
+                
+                # Create directories if they don't exist
+                chunks_dir.mkdir(exist_ok=True, parents=True)
+                embeddings_dir.mkdir(exist_ok=True, parents=True)
+                
+                # Initialize embedder
+                embedder = DocumentEmbedder(
+                    chunks_dir=str(chunks_dir), 
+                    embeddings_dir=str(embeddings_dir),
+                    unified_metrics=self.unified_metrics  # Pass metrics to embedder
+                )
+                
+                # Extract documents that need embeddings
+                docs_needing_embeddings = [doc for doc in documents if "embedding" not in doc or not doc["embedding"]]
+                
+                if docs_needing_embeddings:
+                    logger.info(f"Generating embeddings for {len(docs_needing_embeddings)} documents using batch processing")
+                    
+                    # Use batch embedding to generate all embeddings at once
+                    embedded_docs = embedder.create_embeddings(docs_needing_embeddings)
+                    
+                    # Update original documents with embeddings
+                    embedding_map = {
+                        doc["content"] if "content" in doc else doc["text"]: doc["embedding"] 
+                        for doc in embedded_docs
+                    }
+                    
+                    for doc in documents:
+                        content = doc.get("content", doc.get("text", ""))
+                        if content in embedding_map:
+                            doc["embedding"] = embedding_map[content]
             
-        except Exception as e:
-            logger.error(f"Error adding documents to Supabase: {str(e)}")
-            return all_chunk_ids
+            # Organize documents by source filepath to group by document
+            docs_by_filepath = {}
+            for doc in documents:
+                content = doc.get("content", doc.get("text", ""))
+                metadata = doc.get("metadata", {})
+                embedding = doc.get("embedding", [])
+                filepath = metadata.get("source", "")
+                
+                if filepath not in docs_by_filepath:
+                    docs_by_filepath[filepath] = {
+                        "title": metadata.get("title", "Unknown"),
+                        "author": metadata.get("author", "Unknown"),
+                        "filepath": filepath,
+                        "chunks": []
+                    }
+                
+                docs_by_filepath[filepath]["chunks"].append({
+                    "content": content,
+                    "metadata": metadata,
+                    "embedding": embedding
+                })
+            
+            all_chunk_ids = []
+            max_batch_size = 200  # Recommended batch size for Supabase
+            
+            # Track batch statistics
+            total_batches = 0
+            batch_sizes = []
+            
+            try:
+                # Process each document
+                for filepath, doc_info in docs_by_filepath.items():
+                    # Check if we already have this document based on filepath
+                    doc_id = None
+                    if filepath:
+                        existing_doc = self.adapter.get_document_by_filepath(filepath)
+                        if existing_doc:
+                            doc_id = existing_doc["id"]
+                            logger.info(f"Document {filepath} already exists in database, using existing document ID")
+                    
+                    # Add document if it doesn't exist
+                    if doc_id is None:
+                        doc_id = self.adapter.add_document(
+                            title=doc_info["title"],
+                            author=doc_info["author"],
+                            filepath=doc_info["filepath"]
+                        )
+                    
+                    # Prepare chunks for batch insertion
+                    chunks_to_insert = []
+                    for chunk in doc_info["chunks"]:
+                        chunks_to_insert.append({
+                            "document_id": doc_id,
+                            "content": chunk["content"],
+                            "metadata": chunk["metadata"],
+                            "embedding": chunk["embedding"]
+                        })
+                    
+                    # Insert chunks in batches of max_batch_size
+                    total_insertion_time = 0
+                    total_chunks_inserted = 0
+                    
+                    for i in range(0, len(chunks_to_insert), max_batch_size):
+                        batch = chunks_to_insert[i:i+max_batch_size]
+                        batch_sizes.append(len(batch))
+                        total_batches += 1
+                        
+                        # Log batch information
+                        batch_num = i // max_batch_size + 1
+                        total_batches_for_doc = (len(chunks_to_insert) - 1) // max_batch_size + 1
+                        logger.info(f"Inserting batch {batch_num}/{total_batches_for_doc} with {len(batch)} chunks for document {doc_info['title']}")
+                        
+                        # Create a batch-specific timer if using unified metrics
+                        batch_timer_context = (
+                            PhaseTimer(f"Batch insertion {batch_num}", self.unified_metrics, phase="storage")
+                            if self.unified_metrics and PhaseTimer
+                            else None
+                        )
+                        
+                        # Measure insertion time
+                        start_time = time.time()
+                        if batch_timer_context:
+                            batch_timer_context.__enter__()
+                        
+                        try:
+                            # Insert the batch
+                            chunk_ids = self.adapter.add_chunks_batch(batch)
+                            all_chunk_ids.extend(chunk_ids)
+                            
+                            # Update storage success metrics
+                            if self.unified_metrics:
+                                self.unified_metrics.increment("storage", "successful_chunks", len(chunk_ids))
+                        finally:
+                            # Calculate metrics
+                            if batch_timer_context:
+                                batch_timer_context.__exit__(None, None, None)
+                            end_time = time.time()
+                            batch_time = end_time - start_time
+                            total_insertion_time += batch_time
+                            total_chunks_inserted += len(batch)
+                            
+                            chunks_per_second = len(batch) / batch_time if batch_time > 0 else 0
+                            
+                            logger.info(f"Batch {batch_num}/{total_batches_for_doc} insertion completed in {batch_time:.2f}s ({chunks_per_second:.2f} chunks/second)")
+                    
+                    # Log overall performance for this document
+                    if total_insertion_time > 0 and total_chunks_inserted > 0:
+                        avg_chunks_per_second = total_chunks_inserted / total_insertion_time
+                        logger.info(f"Document '{doc_info['title']}' processing completed: {total_chunks_inserted} chunks inserted in {total_insertion_time:.2f}s ({avg_chunks_per_second:.2f} chunks/second)")
+                
+                # Update metrics with batch statistics
+                if self.unified_metrics and total_batches > 0:
+                    avg_batch_size = sum(batch_sizes) / total_batches if batch_sizes else 0
+                    self.unified_metrics.update("storage", "total_batches", total_batches)
+                    self.unified_metrics.update("storage", "avg_batch_size", avg_batch_size)
+                
+                logger.info(f"Added {len(all_chunk_ids)} chunks to Supabase using batch insertion")
+                return all_chunk_ids
+                
+            except Exception as e:
+                logger.error(f"Error adding documents to Supabase: {str(e)}")
+                if self.unified_metrics:
+                    self.unified_metrics.increment("storage", "failed_chunks", len(documents))
+                return all_chunk_ids
+        finally:
+            # Close the timer if we created one
+            if timer_context:
+                timer_context.__exit__(None, None, None)
     
     def search(self, query: str, k: int = 5, filter_dict: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """

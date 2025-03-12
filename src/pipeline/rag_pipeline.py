@@ -15,45 +15,11 @@ from src.processing.chunker import SemanticChunker
 from src.embedding.embedder import DocumentEmbedder
 from src.storage.vector_store import VectorStoreBase, SupabaseVectorStore
 from database.supabase_adapter import SupabaseAdapter
+from src.pipeline.metrics import PipelineMetrics, PhaseTimer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-class Timer:
-    """Utility class for timing operations."""
-    
-    def __init__(self, name):
-        self.name = name
-        self.start_time = None
-        self.end_time = None
-        
-    def __enter__(self):
-        self.start_time = time.time()
-        return self
-        
-    def __exit__(self, *args):
-        self.end_time = time.time()
-        
-    @property
-    def elapsed(self):
-        """Return elapsed time in seconds."""
-        if self.end_time is None:
-            return time.time() - self.start_time
-        return self.end_time - self.start_time
-    
-    @property
-    def elapsed_str(self):
-        """Return formatted elapsed time string."""
-        seconds = self.elapsed
-        return str(timedelta(seconds=seconds))
-    
-    def log(self, message=None):
-        """Log elapsed time with optional message."""
-        msg = f"{self.name}: {self.elapsed_str}"
-        if message:
-            msg = f"{msg} - {message}"
-        logger.info(msg)
 
 class RAGPipeline:
     """
@@ -78,7 +44,8 @@ class RAGPipeline:
         embedder: DocumentEmbedder,
         vector_store: VectorStoreBase,
         manifest_path: Optional[str] = None,
-        skip_ocr: bool = False
+        skip_ocr: bool = False,
+        metrics_dir: Optional[str] = None
     ):
         """
         Initialize the RAG pipeline with all components.
@@ -90,6 +57,7 @@ class RAGPipeline:
             vector_store: Vector store for storing embeddings
             manifest_path: Path to the manifest file (default: data/processed_documents.json)
             skip_ocr: Whether to skip files that need OCR processing
+            metrics_dir: Optional directory to save metrics for persistence
         """
         self.extractor = extractor
         self.chunker = chunker
@@ -100,18 +68,8 @@ class RAGPipeline:
         # Set up database adapter for duplicate checking
         self.db_adapter = SupabaseAdapter()
         
-        # Statistics tracking
-        self.stats = {
-            "total_files": 0,
-            "manifest_files": 0,
-            "database_files": 0,
-            "new_files": 0,
-            "skipped_ocr_files": 0,
-            "successful_files": 0,
-            "failed_files": 0,
-            "total_chunks": 0,
-            "timings": {}
-        }
+        # Initialize metrics
+        self.metrics = PipelineMetrics(metrics_dir)
         
         # Set up manifest path
         if manifest_path:
@@ -259,7 +217,7 @@ class RAGPipeline:
         db_match_count = 0
         
         # First pass: identify files in manifest
-        with Timer("Manifest check") as manifest_timer:
+        with PhaseTimer("Manifest check", self.metrics) as manifest_timer:
             for file_path in files:
                 if file_path.name in manifest_filenames and not force_reprocess:
                     manifest_files.append(file_path)
@@ -268,7 +226,7 @@ class RAGPipeline:
                     # check if they're in database
                     db_check_count += 1
                     existing_doc = None
-                    with Timer("Database lookup") as db_timer:
+                    with PhaseTimer("Database lookup", self.metrics) as db_timer:
                         existing_doc = self.db_adapter.get_document_by_filepath(str(file_path))
                     
                     if existing_doc and not force_reprocess:
@@ -345,38 +303,74 @@ class RAGPipeline:
         logger.info(f"Split large chunk into {len(result_chunks)} smaller chunks.")
         return result_chunks
 
-    def process_files(self, file_paths: List[str], batch_size: int = 5) -> int:
+    def process_files(self, file_paths: List[str], batch_size: int) -> int:
         """
-        Process a specific list of files through the pipeline.
+        Process a list of files through the pipeline.
         
         Args:
             file_paths: List of file paths to process
             batch_size: Number of documents to process in each batch
             
         Returns:
-            Number of chunks created
+            Number of chunks created and stored
         """
-        logger.info(f"Processing {len(file_paths)} specific files")
-        
-        # Extract text from documents
         extracted_docs = []
-        for file_path in file_paths:
-            path = Path(file_path)
-            if path.suffix.lower() == '.pdf':
-                doc = self.extractor.extract_pdf(path)
-                if doc:
-                    extracted_docs.append(doc)
-            elif path.suffix.lower() == '.epub':
-                doc = self.extractor.extract_epub(path)
-                if doc:
-                    extracted_docs.append(doc)
-            else:
-                logger.warning(f"Unsupported file type: {path}")
         
+        # Process each file and extract text
+        with PhaseTimer("Extraction", self.metrics, phase="extraction") as extraction_timer:
+            for file_path in file_paths:
+                path = Path(file_path)
+                
+                # Update extraction metrics
+                self.metrics.increment("extraction", "files_processed")
+                
+                # Track format-specific metrics
+                extension = path.suffix.lower()
+                if extension == ".pdf":
+                    self.metrics.increment("extraction", "pdf_files")
+                elif extension == ".epub":
+                    self.metrics.increment("extraction", "epub_files")
+                else:
+                    self.metrics.increment("extraction", "other_files")
+                
+                try:
+                    # Extract document
+                    doc_dict = None
+                    if extension == ".pdf":
+                        doc_dict = self.extractor.extract_pdf(path)
+                    elif extension == ".epub":
+                        doc_dict = self.extractor.extract_epub(path)
+                    elif extension == ".txt":
+                        doc_dict = self.extractor.extract_text(path)
+                    else:
+                        doc_dict = self.extractor.extract_document(path)
+                    
+                    if doc_dict:
+                        # Add source info to the extracted doc
+                        doc_dict["source"] = str(path)
+                        extracted_docs.append(doc_dict)
+                        # Update metrics for successful extraction
+                        self.metrics.increment("extraction", "successful_files")
+                    else:
+                        # Update metrics for failed extraction
+                        logger.error(f"Failed to extract content from {path}")
+                        self.metrics.increment("extraction", "failed_files")
+                
+                except Exception as e:
+                    logger.error(f"Error extracting {path}: {str(e)}")
+                    # Update metrics for failed extraction
+                    self.metrics.increment("extraction", "failed_files")
+        
+        # Process the extracted documents
         logger.info(f"Extracted {len(extracted_docs)} documents")
         
-        # Process the extracted documents through chunking, embedding, and storage
-        return self._process_extracted_docs(extracted_docs, batch_size)
+        # Generate chunks, embeddings, and store in vector database
+        total_chunks = self._process_extracted_docs(extracted_docs, batch_size)
+        
+        # Update the overall metrics for successful files
+        self.metrics.update("overall", "successful_files", len(extracted_docs))
+        
+        return total_chunks
     
     def _process_extracted_docs(self, extracted_docs: List[Dict[str, Any]], batch_size: int) -> int:
         """
@@ -399,50 +393,109 @@ class RAGPipeline:
             
             # Create chunks for each document
             all_chunks = []
-            for doc in batch:
-                # Split text into sentences
-                sentences = self.chunker._split_into_sentences(doc["text"])
-                
-                # Create document metadata
-                metadata = {
-                    "source": doc["source"],
-                    "title": doc.get("title", "Unknown"),
-                    "page": doc.get("page", None),
-                    "chapter": doc.get("chapter", None)
-                }
-                
-                # Create chunks from sentences
-                chunks = self.chunker._create_chunks_from_sentences(sentences, metadata)
-                all_chunks.extend(chunks)
+            with PhaseTimer("Chunking", self.metrics, phase="chunking") as chunking_timer:
+                for doc in batch:
+                    # Update metrics for chunking
+                    self.metrics.increment("chunking", "documents_processed")
+                    
+                    # Split text into sentences
+                    sentences = self.chunker._split_into_sentences(doc["text"])
+                    
+                    # Create document metadata
+                    metadata = {
+                        "source": doc["source"],
+                        "title": doc.get("title", "Unknown"),
+                        "page": doc.get("page", None),
+                        "chapter": doc.get("chapter", None)
+                    }
+                    
+                    # Create chunks from sentences
+                    try:
+                        chunks = self.chunker._create_chunks_from_sentences(sentences, metadata)
+                        all_chunks.extend(chunks)
+                        self.metrics.increment("chunking", "successful_documents")
+                        self.metrics.increment("chunking", "chunks_created", len(chunks))
+                    except Exception as e:
+                        logger.error(f"Error creating chunks for {doc['source']}: {str(e)}")
+                        self.metrics.increment("chunking", "failed_documents")
             
             logger.info(f"Created {len(all_chunks)} chunks from batch")
             
             # Check for and split large chunks before embedding
             token_safe_chunks = []
-            for chunk in all_chunks:
-                # Split large chunks into smaller ones
-                split_chunks = self._split_chunk_by_tokens(chunk, max_tokens=8000)
-                token_safe_chunks.extend(split_chunks)
-                
+            with PhaseTimer("Token checking", self.metrics, phase="chunking") as token_timer:
+                for chunk in all_chunks:
+                    # Split large chunks into smaller ones
+                    split_chunks = self._split_chunk_by_tokens(chunk, max_tokens=8000)
+                    token_safe_chunks.extend(split_chunks)
+                    
             if len(token_safe_chunks) > len(all_chunks):
                 logger.info(f"Split {len(all_chunks)} chunks into {len(token_safe_chunks)} smaller chunks to comply with token limits")
+                # Update chunking metrics with the split chunks
+                self.metrics.update("chunking", "chunks_created", len(token_safe_chunks))
             
             # Generate embeddings for the chunks using batch processing
-            try:
-                # Use the batch embedding method to process all chunks at once
-                embedded_chunks = self.embedder.create_embeddings(token_safe_chunks)
-                logger.info(f"Created embeddings for {len(embedded_chunks)} chunks using batch processing")
-            except Exception as e:
-                logger.error(f"Error generating embeddings: {str(e)}")
-                embedded_chunks = []
+            embedded_chunks = []
+            with PhaseTimer("Embedding", self.metrics, phase="embedding") as embedding_timer:
+                try:
+                    # Update metrics
+                    self.metrics.increment("embedding", "chunks_processed", len(token_safe_chunks))
+                    
+                    # Use the batch embedding method to process all chunks at once
+                    embedded_chunks = self.embedder.create_embeddings(token_safe_chunks)
+                    
+                    # Update metrics with embedding results
+                    self.metrics.increment("embedding", "successful_chunks", len(embedded_chunks))
+                    if len(embedded_chunks) < len(token_safe_chunks):
+                        self.metrics.increment("embedding", "failed_chunks", len(token_safe_chunks) - len(embedded_chunks))
+                    
+                    # Transfer embedding stats to our unified metrics
+                    if hasattr(self.embedder, 'stats'):
+                        if "tokens_processed" in self.embedder.stats:
+                            self.metrics.update("embedding", "tokens_processed", self.embedder.stats["tokens_processed"])
+                        if "api_calls" in self.embedder.stats:
+                            self.metrics.update("embedding", "api_calls", self.embedder.stats["api_calls"])
+                        if "api_errors" in self.embedder.stats:
+                            self.metrics.update("embedding", "api_errors", self.embedder.stats["api_errors"])
+                        if "total_batches" in self.embedder.stats:
+                            self.metrics.update("embedding", "total_batches", self.embedder.stats["total_batches"])
+                        if "average_batch_size" in self.embedder.stats:
+                            self.metrics.update("embedding", "avg_batch_size", self.embedder.stats["average_batch_size"])
+                    
+                    logger.info(f"Created embeddings for {len(embedded_chunks)} chunks using batch processing")
+                except Exception as e:
+                    logger.error(f"Error generating embeddings: {str(e)}")
+                    embedded_chunks = []
+                    self.metrics.increment("embedding", "failed_chunks", len(token_safe_chunks))
             
             # Store chunks in vector database using the correct method
-            if embedded_chunks:
-                ids = self.vector_store.add_documents(embedded_chunks)
-                doc_ids.extend(ids)
-                total_chunks += len(ids)
-                logger.info(f"Stored {len(ids)} chunks in vector database")
+            ids = []
+            with PhaseTimer("Storage", self.metrics, phase="storage") as storage_timer:
+                if embedded_chunks:
+                    # Update metrics
+                    self.metrics.increment("storage", "chunks_stored", len(embedded_chunks))
+                    
+                    try:
+                        ids = self.vector_store.add_documents(embedded_chunks)
+                        doc_ids.extend(ids)
+                        total_chunks += len(ids)
+                        self.metrics.increment("storage", "successful_chunks", len(ids))
+                        
+                        # If this is a SupabaseVectorStore, we can estimate batch info
+                        if isinstance(self.vector_store, SupabaseVectorStore):
+                            # A rough estimate based on recommended batch size of 200
+                            batches = (len(embedded_chunks) + 199) // 200
+                            self.metrics.increment("storage", "total_batches", batches)
+                            self.metrics.update("storage", "avg_batch_size", len(embedded_chunks) / batches if batches > 0 else 0)
+                        
+                        logger.info(f"Stored {len(ids)} chunks in vector database")
+                    except Exception as e:
+                        logger.error(f"Error storing chunks: {str(e)}")
+                        self.metrics.increment("storage", "failed_chunks", len(embedded_chunks))
             
+        # Update the total chunks count in the overall metrics
+        self.metrics.update("overall", "total_chunks", total_chunks)
+        
         logger.info(f"Pipeline processing complete. Total chunks stored: {total_chunks}")
         return total_chunks
     
@@ -464,162 +517,137 @@ class RAGPipeline:
         Returns:
             Statistics about the processing run
         """
-        start_time = time.time()
-        overall_timer = Timer("Total processing time")
-        overall_timer.__enter__()
+        # Reset metrics for this run
+        self.metrics.reset()
         
         try:
             # Find all files in the directory
-            with Timer("Finding files") as t:
+            with PhaseTimer("Finding files", self.metrics) as t:
                 input_dir = Path(directory_path)
                 all_files, skipped_ocr_count = self._find_all_files(input_dir, extensions)
-            self.stats["timings"]["find_files"] = t.elapsed
             
             if not all_files:
                 logger.error(f"No files found with extensions {extensions} in {input_dir}")
-                return self.stats
+                return self.metrics.stats
                 
-            self.stats["total_files"] = len(all_files)
-            self.stats["skipped_ocr_files"] = skipped_ocr_count
+            # Update overall metrics
+            self.metrics.update("overall", "total_files", len(all_files))
+            self.metrics.update("overall", "skipped_ocr_files", skipped_ocr_count)
             logger.info(f"Found {len(all_files)} total files with extensions {extensions}")
             
             # Categorize files
-            with Timer("Categorizing files") as t:
+            with PhaseTimer("Categorizing files", self.metrics) as t:
                 manifest_files, database_files, new_files = self._categorize_files(
                     all_files, 
                     force_reprocess=force_reprocess
                 )
-            self.stats["timings"]["categorize_files"] = t.elapsed
-            self.stats["manifest_files"] = len(manifest_files)
-            self.stats["database_files"] = len(database_files)
-            self.stats["new_files"] = len(new_files)
+            
+            # Update metrics for categorization
+            self.metrics.update("overall", "manifest_files", len(manifest_files))
+            self.metrics.update("overall", "database_files", len(database_files))
+            self.metrics.update("overall", "new_files", len(new_files))
             
             # Update manifest with database files
             if database_files:
-                with Timer("Updating manifest with database files") as t:
+                with PhaseTimer("Updating manifest with database files", self.metrics) as t:
                     self._update_manifest(database_files, "database_duplicate")
-                self.stats["timings"]["update_manifest_db"] = t.elapsed
             
             # If only updating manifest, we're done
             if update_manifest_only:
                 logger.info("Manifest updated with database duplicates. Exiting without processing files.")
-                return self.stats
+                self.metrics.log_summary()
+                if self.metrics.metrics_dir:
+                    self.metrics.save()
+                return self.metrics.stats
             
             # If no new files to process, we're done
             if not new_files and not force_reprocess:
                 logger.info("No new files to process. All documents are either in manifest or database.")
-                return self.stats
+                self.metrics.log_summary()
+                if self.metrics.metrics_dir:
+                    self.metrics.save()
+                return self.metrics.stats
             
             # Process files
-            processing_timer = Timer("Document processing")
-            processing_timer.__enter__()
-            
-            try:
-                # If forcing reprocessing of all files
-                if force_reprocess:
-                    logger.info(f"Force reprocessing {len(all_files)} files")
-                    
-                    # Get list of all file paths as strings
-                    all_file_paths = [str(f) for f in all_files]
-                    
-                    # Process files directly
-                    total_chunks = self.process_files(all_file_paths, batch_size)
-                    
-                    self.stats["total_chunks"] = total_chunks
-                    self.stats["successful_files"] = len(all_files)
-                    
-                    # Update manifest with all files as directly processed
-                    with Timer("Updating manifest with all files") as t:
-                        self._update_manifest(all_files, "direct_processing")
-                    self.stats["timings"]["update_manifest_all"] = t.elapsed
-                else:
-                    # Only process new files
-                    logger.info(f"Processing {len(new_files)} new files")
-                    successful_files = []
-                    failed_files = []
-                    
-                    # Create a temporary directory for processing only the new files
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        temp_path = Path(temp_dir)
-                        logger.info(f"Created temporary directory for processing: {temp_path}")
+            with PhaseTimer("Document processing", self.metrics) as processing_timer:
+                try:
+                    # If forcing reprocessing of all files
+                    if force_reprocess:
+                        logger.info(f"Force reprocessing {len(all_files)} files")
                         
-                        # Create symbolic links to the new files in the temp directory
-                        for file_path in new_files:
-                            if file_path.exists():
-                                link_path = temp_path / file_path.name
-                                os.symlink(file_path, link_path)
+                        # Get list of all file paths as strings
+                        all_file_paths = [str(f) for f in all_files]
                         
-                        # Process all files in the temporary directory
-                        try:
-                            # Get the file paths in the temp directory
-                            temp_file_paths = [str(f) for f in temp_path.glob("*.*")]
+                        # Process files directly
+                        total_chunks = self.process_files(all_file_paths, batch_size)
+                        
+                        self.metrics.update("overall", "total_chunks", total_chunks)
+                        self.metrics.update("overall", "successful_files", len(all_files))
+                        
+                        # Update manifest with all files as directly processed
+                        with PhaseTimer("Updating manifest with all files", self.metrics) as t:
+                            self._update_manifest(all_files, "direct_processing")
+                    else:
+                        # Only process new files
+                        logger.info(f"Processing {len(new_files)} new files")
+                        successful_files = []
+                        failed_files = []
+                        
+                        # Create a temporary directory for processing only the new files
+                        with tempfile.TemporaryDirectory() as temp_dir:
+                            temp_path = Path(temp_dir)
+                            logger.info(f"Created temporary directory for processing: {temp_path}")
                             
-                            # Process the files
-                            total_chunks = self.process_files(temp_file_paths, batch_size)
-                            successful_files = new_files
-                            self.stats["total_chunks"] = total_chunks
-                        except Exception as e:
-                            logger.error(f"Error processing directory: {e}")
-                            failed_files = new_files
-                    
-                    self.stats["successful_files"] = len(successful_files)
-                    self.stats["failed_files"] = len(failed_files)
-                    
-                    # Update manifest with successfully processed files
-                    if successful_files:
-                        with Timer("Updating manifest with processed files") as t:
-                            self._update_manifest(successful_files, "direct_processing")
-                        self.stats["timings"]["update_manifest_processed"] = t.elapsed
-                    
-                    logger.info(f"Processing complete. Successfully processed {len(successful_files)} files.")
-                    if failed_files:
-                        logger.error(f"Failed to process {len(failed_files)} files.")
-            
-            except Exception as e:
-                logger.error(f"Error processing documents: {e}")
-                raise
-            finally:
-                processing_timer.__exit__(None, None, None)
-                self.stats["timings"]["document_processing"] = processing_timer.elapsed
+                            # Create symbolic links to the new files in the temp directory
+                            for file_path in new_files:
+                                if file_path.exists():
+                                    link_path = temp_path / file_path.name
+                                    os.symlink(file_path, link_path)
+                            
+                            # Process all files in the temporary directory
+                            try:
+                                # Get the file paths in the temp directory
+                                temp_file_paths = [str(f) for f in temp_path.glob("*.*")]
+                                
+                                # Process the files
+                                total_chunks = self.process_files(temp_file_paths, batch_size)
+                                successful_files = new_files
+                                self.metrics.update("overall", "total_chunks", total_chunks)
+                            except Exception as e:
+                                logger.error(f"Error processing directory: {e}")
+                                failed_files = new_files
+                        
+                        self.metrics.update("overall", "successful_files", len(successful_files))
+                        self.metrics.update("overall", "failed_files", len(failed_files))
+                        
+                        # Update manifest with successfully processed files
+                        if successful_files:
+                            with PhaseTimer("Updating manifest with processed files", self.metrics) as t:
+                                self._update_manifest(successful_files, "direct_processing")
+                        logger.info(f"Processing complete. Successfully processed {len(successful_files)} files.")
+                        if failed_files:
+                            logger.error(f"Failed to process {len(failed_files)} files.")
+                
+                except Exception as e:
+                    logger.error(f"Error processing documents: {e}")
+                    raise
             
         except Exception as e:
             logger.error(f"Error in main processing: {e}")
-        finally:
-            # Stop overall timer and add to stats
-            overall_timer.__exit__(None, None, None)
-            self.stats["total_time"] = overall_timer.elapsed
         
         # Log performance summary
         self._log_performance_summary()
         
-        return self.stats
+        return self.metrics.stats
     
     def _log_performance_summary(self) -> None:
         """Log a summary of the processing performance."""
-        logger.info("\n" + "="*40)
-        logger.info("PERFORMANCE SUMMARY")
-        logger.info("="*40)
-        logger.info(f"Total processing time: {str(timedelta(seconds=self.stats['total_time']))}")
-        logger.info(f"Total files found: {self.stats['total_files']}")
-        if self.stats.get("skipped_ocr_files", 0) > 0:
-            logger.info(f"Files skipped due to OCR: {self.stats['skipped_ocr_files']}")
-        logger.info(f"Files in manifest: {self.stats['manifest_files']}")
-        logger.info(f"Files in database: {self.stats['database_files']}")
-        logger.info(f"New files: {self.stats['new_files']}")
-        logger.info(f"Successfully processed: {self.stats['successful_files']}")
-        if "failed_files" in self.stats:
-            logger.info(f"Failed to process: {self.stats['failed_files']}")
+        # Use the new metrics summary method
+        self.metrics.log_summary()
         
-        # Display timing details
-        logger.info("\nTiming Details:")
-        for stage, elapsed in self.stats["timings"].items():
-            logger.info(f"  {stage}: {str(timedelta(seconds=elapsed))}")
-        
-        # Display completion message
-        logger.info("\nDocument processing completed!")
-        logger.info(f"You can now query the system with: python tools/query_cli.py \"Your question here\"")
-        logger.info(f"Or use the interactive chat: python tools/chat_cli.py")
-        logger.info(f"Manifest updated: {self.manifest_path}")
+        # Save metrics if persistence is enabled
+        if self.metrics.metrics_dir:
+            self.metrics.save()
     
     def query(self, query_text: str, k: int = 5, filter_dict: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
@@ -680,6 +708,12 @@ class RAGPipeline:
             help="Path to the manifest file. Default is data/processed_documents.json",
             default=os.path.join("data", "processed_documents.json")
         )
+        parser.add_argument(
+            "--metrics_dir",
+            type=str,
+            help="Directory to save metrics data. Default is data/metrics",
+            default=os.path.join("data", "metrics")
+        )
         
         args = parser.parse_args()
         
@@ -692,9 +726,10 @@ class RAGPipeline:
         processed_dir = data_dir / "processed"
         chunks_dir = data_dir / "chunks"
         embeddings_dir = data_dir / "embeddings"
+        metrics_dir = Path(args.metrics_dir)
         
         # Create directories if they don't exist
-        for dir_path in [raw_dir, processed_dir, chunks_dir, embeddings_dir]:
+        for dir_path in [raw_dir, processed_dir, chunks_dir, embeddings_dir, metrics_dir]:
             dir_path.mkdir(exist_ok=True, parents=True)
         
         # Initialize components
@@ -710,7 +745,8 @@ class RAGPipeline:
             embedder=embedder, 
             vector_store=vector_store,
             manifest_path=args.manifest_path,
-            skip_ocr=args.skip_ocr
+            skip_ocr=args.skip_ocr,
+            metrics_dir=args.metrics_dir
         )
         
         # Process the directory
