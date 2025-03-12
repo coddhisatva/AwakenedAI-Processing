@@ -1,0 +1,69 @@
+{
+  "total_time": 254.03285312652588,
+  "start_timestamp": "2025-03-11T21:43:02.790591",
+  "total_files": 33,
+  "manifest_files": 31,
+  "database_files": 0,
+  "new_files": 2,
+  "skipped_ocr_files": 0,
+  "successful_files": 2,
+  "failed_files": 0,
+  "total_chunks": 1076,
+  "phases": {
+    "extraction": {
+      "time": 0.005293846130371094,
+      "files_processed": 2,
+      "successful_files": 2,
+      "failed_files": 0,
+      "pdf_files": 2,
+      "epub_files": 0,
+      "other_files": 0,
+      "ocr_files": 0,
+      "throughput": 377.7971536660061
+    },
+    "chunking": {
+      "time": 0.08534574508666992,
+      "documents_processed": 2,
+      "successful_documents": 2,
+      "failed_documents": 0,
+      "chunks_created": 1076,
+      "avg_chunks_per_doc": 538.0,
+      "throughput": 12607.541230172697
+    },
+    "embedding": {
+      "time": 19.160248041152954,
+      "chunks_processed": 1076,
+      "successful_chunks": 1076,
+      "failed_chunks": 0,
+      "tokens_processed": 223385,
+      "throughput": 56.15793687476984,
+      "token_throughput": 11658.77391149671,
+      "api_calls": 29,
+      "api_errors": 0,
+      "total_batches": 29,
+      "avg_batch_size": 37.10344827586207
+    },
+    "storage": {
+      "time": 233.66060376167297,
+      "chunks_stored": 1076,
+      "successful_chunks": 1076,
+      "failed_chunks": 0,
+      "throughput": 4.604969698261538,
+      "total_batches": 6,
+      "avg_batch_size": 179.33333333333334
+    }
+  },
+  "timings": {
+    "Finding files": 0.0013589859008789062,
+    "Database lookup": 0.13935279846191406,
+    "Manifest check": 1.056663990020752,
+    "Categorizing files": 1.0568888187408447,
+    "Extraction": 0.005293846130371094,
+    "Chunking": 0.08490300178527832,
+    "Token checking": 0.00044274330139160156,
+    "Embedding": 19.160248041152954,
+    "Storage": 233.66060376167297,
+    "Updating manifest with processed files": 0.00140380859375,
+    "Document processing": 252.97230005264282
+  }
+}

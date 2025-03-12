@@ -327,16 +327,21 @@ class SupabaseVectorStore(VectorStoreBase):
                 filepath = metadata.get("source", "")
                 
                 if filepath not in docs_by_filepath:
+                    # Extract only the metadata fields required by the database schema
+                    # The database only stores title, author, and filepath
+                    title = metadata.get("title", "Unknown")
+                    author = metadata.get("author", "Unknown")
+                    
                     docs_by_filepath[filepath] = {
-                        "title": metadata.get("title", "Unknown"),
-                        "author": metadata.get("author", "Unknown"),
+                        "title": title,
+                        "author": author,
                         "filepath": filepath,
                         "chunks": []
                     }
                 
                 docs_by_filepath[filepath]["chunks"].append({
                     "content": content,
-                    "metadata": metadata,
+                    "metadata": metadata,  # Keep full metadata for chunks as it's stored in JSON
                     "embedding": embedding
                 })
             

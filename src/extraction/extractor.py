@@ -161,14 +161,14 @@ class DocumentExtractor:
                         metadata["title"] = pdf_info.title
                     if pdf_info.author:
                         metadata["author"] = pdf_info.author
-                    if pdf_info.subject:
-                        metadata["subject"] = pdf_info.subject
-                    if pdf_info.creator:
-                        metadata["creator"] = pdf_info.creator
                 
                 # If no title in metadata, use filename without extension as title
                 if "title" not in metadata or not metadata["title"]:
                     metadata["title"] = file_path.stem
+                
+                # Ensure author field exists
+                if "author" not in metadata or not metadata["author"]:
+                    metadata["author"] = "Unknown"
                 
                 # If text was extracted, save it
                 if text.strip():
@@ -315,18 +315,14 @@ class DocumentExtractor:
                 metadata["title"] = book.get_metadata('DC', 'title')[0][0]
             if book.get_metadata('DC', 'creator'):
                 metadata["author"] = book.get_metadata('DC', 'creator')[0][0]
-            if book.get_metadata('DC', 'description'):
-                metadata["description"] = book.get_metadata('DC', 'description')[0][0]
-            if book.get_metadata('DC', 'publisher'):
-                metadata["publisher"] = book.get_metadata('DC', 'publisher')[0][0]
-            if book.get_metadata('DC', 'date'):
-                metadata["date"] = book.get_metadata('DC', 'date')[0][0]
-            if book.get_metadata('DC', 'language'):
-                metadata["language"] = book.get_metadata('DC', 'language')[0][0]
             
             # If no title in metadata, use filename without extension as title
             if "title" not in metadata or not metadata["title"]:
                 metadata["title"] = file_path.stem
+                
+            # Ensure author field exists
+            if "author" not in metadata or not metadata["author"]:
+                metadata["author"] = "Unknown"
             
             # Save the extracted content and metadata
             if text:

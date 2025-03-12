@@ -405,8 +405,7 @@ class RAGPipeline:
                     metadata = {
                         "source": doc["source"],
                         "title": doc.get("title", "Unknown"),
-                        "page": doc.get("page", None),
-                        "chapter": doc.get("chapter", None)
+                        "author": doc.get("author", "Unknown")
                     }
                     
                     # Create chunks from sentences

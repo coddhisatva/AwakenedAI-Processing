@@ -45,7 +45,7 @@
   - Web Application repository will use Next.js, React, TypeScript
   - Centralized Supabase database for both repositories
 - Switched from ChromaDB to pgVector with Supabase
-- Enhanced metadata collection, including title, author, subject, and creator from PDF properties
+- Enhanced metadata collection, including title, author, from PDF properties
 - Improved source attribution in chat responses with proper document titles
 - Upgraded default LLM from GPT-3.5 Turbo to GPT-4 Turbo
 - Implemented single-text embedding functionality for improved query handling

@@ -322,8 +322,8 @@ The `DocumentExtractor` class handles the extraction of text from various docume
   - Applies image processing optimizations like deskewing
   - Extracts text from the OCR'd document
 - Rich metadata extraction:
-  - PDF metadata: title, author, subject, creator
-  - EPUB metadata: title, author, description, publisher, date, language
+  - PDF metadata: title, author
+  - EPUB metadata: title, author
 - Error handling for encrypted or problematic documents
 - Skip processing for already processed documents:
   - Checks if output file exists before processing
