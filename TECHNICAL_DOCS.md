@@ -576,6 +576,167 @@ The LLM integration provides AI-generated responses based on retrieved context:
   - Implemented batched embedding generation
   - Added error resilience and retry mechanisms
   - Enhanced monitoring and metrics for performance tuning
+- ✅ Unified metrics framework implemented:
+  - Comprehensive performance tracking across all pipeline stages
+  - Phase-specific timers for detailed performance analysis
+  - Cross-phase analytics for understanding bottlenecks
+  - Metrics persistence for historical comparisons
+  - Dashboard tools for visualizing performance metrics
+
+## Performance Metrics System
+
+The Awakened AI Processing Pipeline includes a comprehensive performance metrics system designed to track, analyze, and visualize the efficiency of the pipeline across all processing stages. This system provides valuable insights for optimization, troubleshooting, and monitoring production performance.
+
+### 1. Unified Metrics Framework (`src/pipeline/metrics.py`)
+
+The `PipelineMetrics` class forms the core of our metrics system:
+
+- **Centralized Metrics Collection**: Accumulates performance data from all pipeline components
+- **Phase-Specific Tracking**: Organizes metrics by pipeline phase (extraction, chunking, embedding, storage)
+- **Cross-Phase Analytics**: Analyzes relationships between different pipeline stages
+- **Metrics Persistence**: Saves metrics to JSON files for historical analysis
+- **Detailed Timings**: Captures fine-grained timing information for each operation
+
+Key components of the metrics framework include:
+
+```python
+# Initialize metrics with optional persistence directory
+metrics = PipelineMetrics(metrics_dir="data/metrics")
+
+# Update phase-specific metrics
+metrics.update("extraction", "files_processed", 10)
+
+# Increment counters
+metrics.increment("chunking", "chunks_created", 50)
+
+# Add timing information
+metrics.add_timing("PDF extraction", 1.23, phase="extraction")
+
+# Calculate derived metrics (throughput, averages)
+metrics.calculate_derived_metrics()
+
+# Log comprehensive summary
+metrics.log_summary()
+
+# Save metrics to file
+metrics.save()
+```
+
+### 2. Phase Timer System
+
+The `PhaseTimer` class enables precise measurement of operation durations:
+
+- **Context Manager Interface**: Simple usage with Python's `with` statement
+- **Phase Association**: Links timings to specific pipeline phases
+- **Hierarchical Timing**: Supports nested timers for detailed profiling
+- **Automatic Metrics Integration**: Updates the unified metrics system
+
+Example usage:
+
+```python
+# Time an operation and associate it with a phase
+with PhaseTimer("Process document", metrics, phase="extraction"):
+    # Processing code here
+    extract_document()
+```
+
+### 3. Tracked Metrics
+
+The framework tracks a comprehensive set of metrics:
+
+#### Overall Pipeline Metrics:
+- Total processing time
+- Files processed (total, successful, failed)
+- Total chunks created
+- Database statistics
+
+#### Extraction Phase Metrics:
+- Time spent in extraction
+- Files processed by format (PDF, EPUB, etc.)
+- OCR statistics
+- Throughput (files/second)
+
+#### Chunking Phase Metrics:
+- Time spent in chunking
+- Documents processed
+- Chunks created
+- Average chunks per document
+- Throughput (chunks/second)
+
+#### Embedding Phase Metrics:
+- Time spent generating embeddings
+- Chunks processed
+- Token statistics
+- API calls and errors
+- Rate limit statistics
+- Batch processing statistics
+- Throughput (chunks/second, tokens/second)
+
+#### Storage Phase Metrics:
+- Time spent in storage operations
+- Chunks stored
+- Batch insertion statistics
+- Database performance metrics
+- Throughput (chunks/second)
+
+#### Cross-Phase Analytics:
+- Time distribution by phase
+- Performance correlations
+- Processing efficiency metrics
+
+### 4. Metrics Dashboard (`tools/metrics_dashboard.py`)
+
+The metrics dashboard provides visualization and analysis of collected metrics:
+
+- **Metrics Loading**: Loads and parses metrics files from the metrics directory
+- **Summary Display**: Shows high-level statistics from the most recent pipeline run
+- **Historical Analysis**: Compares performance across multiple runs
+- **Performance Charts**: Generates visualizations of key metrics:
+  - Phase time distribution
+  - Throughput by phase
+  - Total processing time trends
+
+Example usage:
+
+```bash
+# Display summary of recent metrics
+python tools/metrics_dashboard.py
+
+# Generate charts and save to output directory
+python tools/metrics_dashboard.py --generate_charts --output_dir data/metrics/charts
+
+# Analyze a specific number of recent runs
+python tools/metrics_dashboard.py --limit 5
+```
+
+### 5. Integration with Pipeline Components
+
+All major pipeline components are integrated with the metrics system:
+
+- **RAGPipeline**: Initializes the metrics system and coordinates metrics collection
+- **DocumentExtractor**: Tracks file format statistics and extraction performance
+- **SemanticChunker**: Monitors chunking efficiency and document-to-chunk ratios
+- **DocumentEmbedder**: Records token usage, API statistics, and embedding throughput
+- **SupabaseVectorStore**: Measures storage performance and batch insertion metrics
+
+### 6. Benefits of the Metrics System
+
+1. **Performance Optimization**: Identifies bottlenecks and optimization opportunities
+2. **Resource Planning**: Provides data for capacity planning and resource allocation
+3. **Cost Monitoring**: Tracks API usage and associated costs for budget management
+4. **Quality Assurance**: Validates pipeline efficiency and reliability
+5. **Troubleshooting**: Helps diagnose and resolve performance issues
+6. **Progress Tracking**: Monitors progress during large-scale document processing
+
+### 7. Using Metrics in Production
+
+For production deployments, consider these best practices:
+
+- **Regular Monitoring**: Review metrics dashboard outputs regularly
+- **Baseline Comparison**: Establish performance baselines for detecting changes
+- **Alert Thresholds**: Set up alerts for metrics falling outside expected ranges
+- **Retention Policy**: Define how long to retain metrics history
+- **Aggregation**: For very large processing jobs, consider aggregating metrics
 
 ## Scaling Considerations
 

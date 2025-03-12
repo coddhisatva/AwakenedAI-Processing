@@ -20,6 +20,7 @@ The Awakened AI project is structured as a multi-repository system:
    - Embedding generation
    - Vector storage integration
    - Basic query tools
+   - Performance metrics and analytics
    
 2. **Web Application Repository** (Separate Repository)
    - Frontend interface built with Next.js
@@ -181,7 +182,7 @@ The `DocumentExtractor` class handles the extraction of text from various docume
 - Initialization with raw and processed directories
 - Method to extract text from PDF files using PyPDF2
 - Error handling for encrypted or problematic PDFs
-- Rich metadata extraction (title, author, subject, creator)
+- Rich metadata extraction (title, author, etc.)
 - Fallback to filename as title when metadata is missing
 - JSON output with extracted text and metadata
 
@@ -335,6 +336,16 @@ The LLM integration provides AI-generated responses based on retrieved context:
   - Connected to OpenAI API for response generation
   - Created interactive chat interface
   - Implemented enhanced source attribution with document titles
+- ✅ Unified performance metrics system:
+  - Comprehensive tracking across all pipeline phases
+  - Performance analytics and visualization tools
+  - Historical data persistence and comparison
+
+## Documentation
+
+- [Technical Documentation](TECHNICAL_DOCS.md) - Complete technical documentation of the system
+- [Performance Metrics System](METRICS.md) - Detailed guide to the metrics framework
+- [Development Log](DEVLOG.md) - Ongoing development notes and progress
 
 ## Scaling Considerations
 
