@@ -675,6 +675,12 @@ class RAGPipeline:
             default=os.path.join("data", "raw")
         )
         parser.add_argument(
+            "--subdir",
+            type=str,
+            help="Subdirectory within input_dir to process (e.g., 'group0' or 'WIZARD-AI-2')",
+            required=True
+        )
+        parser.add_argument(
             "--batch_size", 
             type=int, 
             help="Number of documents to process in each batch. Default is 5",
@@ -721,7 +727,10 @@ class RAGPipeline:
         
         # Define directories
         data_dir = Path(os.path.abspath(os.path.join("data")))
-        raw_dir = Path(args.input_dir)
+        # Combine input_dir with the required subdir
+        raw_dir = Path(args.input_dir) / args.subdir
+        logger.info(f"Processing subdirectory: {raw_dir}")
+            
         processed_dir = data_dir / "processed"
         chunks_dir = data_dir / "chunks"
         embeddings_dir = data_dir / "embeddings"
@@ -750,7 +759,7 @@ class RAGPipeline:
         
         # Process the directory
         pipeline.process_directory(
-            directory_path=args.input_dir,
+            directory_path=str(raw_dir),  # Use the combined path with subdir
             batch_size=args.batch_size,
             extensions=args.extensions,
             force_reprocess=args.force_reprocess,
