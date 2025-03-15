@@ -328,20 +328,22 @@ class SupabaseVectorStore(VectorStoreBase):
                 
                 if filepath not in docs_by_filepath:
                     # Extract only the metadata fields required by the database schema
-                    # The database only stores title, author, and filepath
+                    # The database stores title, author, filepath, and now batch_id
                     title = metadata.get("title", "Unknown")
                     author = metadata.get("author", "Unknown")
+                    batch_id = metadata.get("batch_id", None)  # Get batch_id from metadata
                     
                     docs_by_filepath[filepath] = {
                         "title": title,
                         "author": author,
                         "filepath": filepath,
+                        "batch_id": batch_id,  # Store batch_id
                         "chunks": []
                     }
                 
                 docs_by_filepath[filepath]["chunks"].append({
                     "content": content,
-                    "metadata": metadata,  # Keep full metadata for chunks as it's stored in JSON
+                    "metadata": metadata,  # Keep full metadata for chunks
                     "embedding": embedding
                 })
             
@@ -368,7 +370,8 @@ class SupabaseVectorStore(VectorStoreBase):
                         doc_id = self.adapter.add_document(
                             title=doc_info["title"],
                             author=doc_info["author"],
-                            filepath=doc_info["filepath"]
+                            filepath=doc_info["filepath"],
+                            batch_id=doc_info["batch_id"]  # Pass batch_id
                         )
                     
                     # Prepare chunks for batch insertion

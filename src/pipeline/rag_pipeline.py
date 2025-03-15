@@ -348,6 +348,13 @@ class RAGPipeline:
                     if doc_dict:
                         # Add source info to the extracted doc
                         doc_dict["source"] = str(path)
+                        
+                        # Add batch_id to the metadata if available from the extractor
+                        if hasattr(self.extractor, 'batch_id') and self.extractor.batch_id:
+                            if 'metadata' not in doc_dict:
+                                doc_dict['metadata'] = {}
+                            doc_dict['metadata']['batch_id'] = self.extractor.batch_id
+                        
                         extracted_docs.append(doc_dict)
                         # Update metrics for successful extraction
                         self.metrics.increment("extraction", "successful_files")

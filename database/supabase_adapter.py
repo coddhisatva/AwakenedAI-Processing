@@ -30,7 +30,7 @@ class SupabaseAdapter:
         
         self.supabase: Client = create_client(supabase_url, supabase_key)
         
-    def add_document(self, title: str, author: str, filepath: str) -> str:
+    def add_document(self, title: str, author: str, filepath: str, batch_id: str = None) -> str:
         """
         Add a document to the database.
         
@@ -38,15 +38,22 @@ class SupabaseAdapter:
             title: Document title
             author: Document author
             filepath: Path to the document file
+            batch_id: Identifier for the processing batch
             
         Returns:
             The document ID
         """
-        response = self.supabase.table("documents").insert({
+        document_data = {
             "title": title,
             "author": author,
             "filepath": filepath
-        }).execute()
+        }
+        
+        # Add batch_id if provided
+        if batch_id:
+            document_data["batch_id"] = batch_id
+        
+        response = self.supabase.table("documents").insert(document_data).execute()
         
         return response.data[0]["id"]
     
