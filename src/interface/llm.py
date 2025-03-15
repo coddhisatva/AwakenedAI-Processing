@@ -34,7 +34,7 @@ class LLMService:
     
     def __init__(
         self,
-        model_name: str = "gpt-4-turbo",
+        model_name: str = "gpt-3.5-turbo",
         temperature: float = 0.1,
         max_tokens: int = 1000,
         api_key: Optional[str] = None
