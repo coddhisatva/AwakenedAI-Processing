@@ -3,6 +3,7 @@ import json
 import logging
 import tempfile
 import subprocess
+import io
 from pathlib import Path
 from typing import Dict, Any, List
 import datetime
@@ -11,6 +12,10 @@ import PyPDF2
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
+
+# Import pdfminer.six libraries for fallback extraction
+from pdfminer.high_level import extract_text as pdfminer_extract_text
+from pdfminer.pdfparser import PDFSyntaxError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -138,10 +143,17 @@ class DocumentExtractor:
                 num_pages = len(reader.pages)
                 text = ""
                 
-                for i, page in enumerate(reader.pages):
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n\n"
+                for i in range(num_pages):
+                    try:
+                        page = reader.pages[i]
+                        try:
+                            page_text = page.extract_text()
+                            if page_text:
+                                text += page_text + "\n\n"
+                        except Exception as page_err:
+                            logger.warning(f"Error extracting text from page {i+1} of {file_path.name}: {page_err}")
+                    except Exception as page_access_err:
+                        logger.warning(f"Error accessing page {i+1} of {file_path.name}: {page_access_err}")
                 
                 # Extract document information from PDF metadata
                 pdf_info = reader.metadata
@@ -214,11 +226,19 @@ class DocumentExtractor:
                 with open(temp_output_path, 'rb') as file:
                     reader = PyPDF2.PdfReader(file)
                     text = ""
+                    num_pages = len(reader.pages)
                     
-                    for page in reader.pages:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text += page_text + "\n\n"
+                    for i in range(num_pages):
+                        try:
+                            page = reader.pages[i]
+                            try:
+                                page_text = page.extract_text()
+                                if page_text:
+                                    text += page_text + "\n\n"
+                            except Exception as page_err:
+                                logger.warning(f"Error extracting text from OCR'd page {i+1} of {file_path.name}: {page_err}")
+                        except Exception as page_access_err:
+                            logger.warning(f"Error accessing OCR'd page {i+1} of {file_path.name}: {page_access_err}")
                 
                 # Update metadata to indicate OCR was applied
                 metadata["ocr_applied"] = True
@@ -249,10 +269,48 @@ class DocumentExtractor:
                 raise ValueError(f"Failed to extract text from {file_path}, OCR error: {str(ocr_e)}")
         
         except Exception as e:
-            # Instead of logging the error here, include detailed context in the exception
-            # This avoids duplicate logs but preserves all information
-            detailed_message = f"Error processing PDF {file_path}: {str(e)}"
-            raise ValueError(detailed_message) from e
+            # Try pdfminer.six as a fallback
+            logger.warning(f"PyPDF2 extraction failed for {file_path.name}: {str(e)}. Attempting pdfminer.six fallback.")
+            try:
+                # Try to extract with pdfminer.six
+                pdfminer_text = self._extract_pdf_with_pdfminer(file_path)
+                
+                if pdfminer_text.strip():
+                    # Create basic metadata since we couldn't get it from PyPDF2
+                    metadata = {
+                        "filename": file_path.name,
+                        "file_size": os.path.getsize(file_path),
+                        "file_type": "pdf",
+                        "ocr_applied": False,
+                        "title": file_path.stem,
+                        "author": "Unknown"
+                    }
+                    
+                    # Save the extracted content
+                    self._save_processed_document(output_path, pdfminer_text, metadata)
+                    self.stats["successful"] += 1
+                    self.stats["by_type"]["pdf"]["processed"] += 1
+                    
+                    # Return in the format expected by the pipeline
+                    return {
+                        "text": pdfminer_text,
+                        "source": file_path.name,
+                        "title": file_path.stem,
+                        "page": None,
+                        "chapter": None
+                    }
+                
+                # If pdfminer.six also failed to extract text, then try OCR or fail
+                logger.warning(f"No text extracted with pdfminer.six for {file_path.name}")
+                
+                # Here we could add OCR as a last resort, but for now we'll just fail
+                detailed_message = f"Error processing PDF {file_path}: {str(e)} and pdfminer.six failed to extract text"
+                raise ValueError(detailed_message) from e
+                
+            except Exception as pdfminer_e:
+                # Both PyPDF2 and pdfminer.six failed
+                detailed_message = f"Error processing PDF {file_path}: PyPDF2 error: {str(e)}, pdfminer.six error: {str(pdfminer_e)}"
+                raise ValueError(detailed_message) from e
     
     def extract_epub(self, file_path: Path) -> Dict[str, Any]:
         """
@@ -378,4 +436,33 @@ class DocumentExtractor:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(document, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"Saved processed document to {output_path}") 
+        logger.info(f"Saved processed document to {output_path}")
+    
+    def _extract_pdf_with_pdfminer(self, file_path: Path) -> str:
+        """
+        Extract text from a PDF file using pdfminer.six as a fallback when PyPDF2 fails.
+        
+        Args:
+            file_path: Path to the PDF file
+            
+        Returns:
+            Extracted text from the PDF
+        """
+        try:
+            logger.info(f"Attempting PDF extraction with pdfminer.six for {file_path.name}")
+            
+            # Use pdfminer to extract text from the PDF
+            text = pdfminer_extract_text(str(file_path))
+            
+            if text.strip():
+                logger.info(f"Successfully extracted text with pdfminer.six from {file_path.name}")
+                return text
+            else:
+                logger.warning(f"pdfminer.six extraction successful but no text found in {file_path.name}")
+                return ""
+        except PDFSyntaxError as e:
+            logger.warning(f"pdfminer.six extraction failed due to PDF syntax error in {file_path.name}: {e}")
+            return ""
+        except Exception as e:
+            logger.warning(f"pdfminer.six extraction failed for {file_path.name}: {e}")
+            return "" 
