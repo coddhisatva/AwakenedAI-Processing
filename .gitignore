@@ -43,10 +43,7 @@ data/vectordb/
 .DS_Store
 
 # Data directories
-data/processed/
-data/chunks/
-data/embeddings/
-data/vectordb/
+data/
 
 # Logs
 *.log 

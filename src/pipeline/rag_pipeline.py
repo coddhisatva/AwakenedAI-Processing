@@ -608,7 +608,7 @@ class RAGPipeline:
                             for file_path in new_files:
                                 if file_path.exists():
                                     link_path = temp_path / file_path.name
-                                    os.symlink(file_path, link_path)
+                                    os.symlink(file_path.absolute(), link_path)
                             
                             # Process all files in the temporary directory
                             try:
