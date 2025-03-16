@@ -152,23 +152,26 @@ class DocumentExtractor:
                     "file_size": os.path.getsize(file_path),
                     "num_pages": num_pages,
                     "file_type": "pdf",
-                    "ocr_applied": False
+                    "ocr_applied": False,
+                    "title": file_path.stem,  # Default title (will be overwritten if metadata is available)
+                    "author": "Unknown"       # Default author (will be overwritten if metadata is available)
                 }
                 
-                # Add PDF metadata if available
+                # Try to add PDF metadata if available, with robust error handling
                 if pdf_info:
-                    if pdf_info.title:
-                        metadata["title"] = pdf_info.title
-                    if pdf_info.author:
-                        metadata["author"] = pdf_info.author
-                
-                # If no title in metadata, use filename without extension as title
-                if "title" not in metadata or not metadata["title"]:
-                    metadata["title"] = file_path.stem
-                
-                # Ensure author field exists
-                if "author" not in metadata or not metadata["author"]:
-                    metadata["author"] = "Unknown"
+                    try:
+                        # Safely extract title
+                        if hasattr(pdf_info, 'title') and pdf_info.title and pdf_info.title not in (None, ''):
+                            metadata["title"] = str(pdf_info.title)
+                    except Exception as metadata_err:
+                        logger.warning(f"Error extracting title metadata from {file_path.name}: {metadata_err}")
+                        
+                    try:
+                        # Safely extract author
+                        if hasattr(pdf_info, 'author') and pdf_info.author and pdf_info.author not in (None, ''):
+                            metadata["author"] = str(pdf_info.author)
+                    except Exception as metadata_err:
+                        logger.warning(f"Error extracting author metadata from {file_path.name}: {metadata_err}")
                 
                 # If text was extracted, save it
                 if text.strip():
@@ -309,22 +312,27 @@ class DocumentExtractor:
                 "filename": file_path.name,
                 "file_size": os.path.getsize(file_path),
                 "num_chapters": chapter_count,
-                "file_type": "epub"
+                "file_type": "epub",
+                "title": file_path.stem,  # Default title (will be overwritten if metadata is available)
+                "author": "Unknown"       # Default author (will be overwritten if metadata is available)
             }
             
-            # Extract metadata from the EPUB
-            if book.get_metadata('DC', 'title'):
-                metadata["title"] = book.get_metadata('DC', 'title')[0][0]
-            if book.get_metadata('DC', 'creator'):
-                metadata["author"] = book.get_metadata('DC', 'creator')[0][0]
-            
-            # If no title in metadata, use filename without extension as title
-            if "title" not in metadata or not metadata["title"]:
-                metadata["title"] = file_path.stem
+            # Extract metadata from the EPUB with robust error handling
+            try:
+                # Safely extract title
+                title_data = book.get_metadata('DC', 'title')
+                if title_data and len(title_data) > 0 and title_data[0][0]:
+                    metadata["title"] = str(title_data[0][0])
+            except Exception as metadata_err:
+                logger.warning(f"Error extracting title metadata from {file_path.name}: {metadata_err}")
                 
-            # Ensure author field exists
-            if "author" not in metadata or not metadata["author"]:
-                metadata["author"] = "Unknown"
+            try:
+                # Safely extract author
+                creator_data = book.get_metadata('DC', 'creator')
+                if creator_data and len(creator_data) > 0 and creator_data[0][0]:
+                    metadata["author"] = str(creator_data[0][0])
+            except Exception as metadata_err:
+                logger.warning(f"Error extracting author metadata from {file_path.name}: {metadata_err}")
             
             # Save the extracted content and metadata
             if text:
