@@ -5,6 +5,8 @@ import os
 import time
 import random
 import logging
+import json
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 import numpy as np
@@ -20,7 +22,7 @@ load_dotenv()
 class SupabaseAdapter:
     """Adapter for storing and retrieving vectors from Supabase with pgvector."""
     
-    def __init__(self):
+    def __init__(self, manifest_path: Optional[str] = None):
         """Initialize the Supabase client."""
         supabase_url = os.getenv("SUPABASE_URL")
         supabase_key = os.getenv("SUPABASE_KEY")
@@ -29,6 +31,10 @@ class SupabaseAdapter:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
         
         self.supabase: Client = create_client(supabase_url, supabase_key)
+        
+        # Set manifest path if provided
+        if manifest_path:
+            self.manifest_path = Path(manifest_path)
         
     def add_document(self, title: str, author: str, filepath: str, batch_id: str = None) -> str:
         """
@@ -55,7 +61,48 @@ class SupabaseAdapter:
         
         response = self.supabase.table("documents").insert(document_data).execute()
         
-        return response.data[0]["id"]
+        # If document was successfully added to the database, update manifest
+        if response.data and len(response.data) > 0:
+            document_id = response.data[0]["id"]
+            
+            # Update manifest if path was provided
+            if hasattr(self, 'manifest_path'):
+                self._update_manifest_simple(filepath)
+                
+            return document_id
+        
+        return None
+        
+    def _update_manifest_simple(self, filepath: str) -> None:
+        """
+        Simple function to update the manifest when a document is added to the database.
+        
+        Args:
+            filepath: Path to the file that was added to the database
+        """
+        try:
+            # Load existing manifest
+            if self.manifest_path.exists():
+                with open(self.manifest_path, 'r') as f:
+                    manifest = json.load(f)
+            else:
+                manifest = {}
+            
+            # Add the file to the manifest
+            file_path = Path(filepath)
+            manifest[file_path.name] = {
+                "filepath": str(filepath),
+                "processed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "source": "direct_processing"
+            }
+            
+            # Write updated manifest
+            with open(self.manifest_path, 'w') as f:
+                json.dump(manifest, f, indent=2)
+                
+            logger.info(f"Updated manifest with successfully processed document: {file_path.name}")
+        except Exception as e:
+            logger.error(f"Error updating manifest: {e}")
     
     def add_chunks_batch(self, chunks: List[Dict[str, Any]]) -> List[str]:
         """

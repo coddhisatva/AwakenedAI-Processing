@@ -232,10 +232,10 @@ class PineconeVectorStore(VectorStoreBase):
 class SupabaseVectorStore(VectorStoreBase):
     """Supabase implementation of vector store."""
     
-    def __init__(self, unified_metrics: Optional[PipelineMetrics] = None):
+    def __init__(self, unified_metrics: Optional[PipelineMetrics] = None, manifest_path: Optional[str] = None):
         """Initialize Supabase vector store."""
         try:
-            self.adapter = SupabaseAdapter()
+            self.adapter = SupabaseAdapter(manifest_path=manifest_path)
             # Store unified metrics if provided
             self.unified_metrics = unified_metrics
             logger.info(f"Initialized Supabase vector store")

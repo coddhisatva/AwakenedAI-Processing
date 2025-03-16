@@ -66,7 +66,7 @@ class RAGPipeline:
         self.skip_ocr = skip_ocr
         
         # Set up database adapter for duplicate checking
-        self.db_adapter = SupabaseAdapter()
+        self.db_adapter = SupabaseAdapter(manifest_path=manifest_path)
         
         # Initialize metrics
         self.metrics = PipelineMetrics(metrics_dir)
@@ -553,11 +553,6 @@ class RAGPipeline:
             self.metrics.update("overall", "database_files", len(database_files))
             self.metrics.update("overall", "new_files", len(new_files))
             
-            # Update manifest with database files
-            if database_files:
-                with PhaseTimer("Updating manifest with database files", self.metrics) as t:
-                    self._update_manifest(database_files, "database_duplicate")
-            
             # If only updating manifest, we're done
             if update_manifest_only:
                 logger.info("Manifest updated with database duplicates. Exiting without processing files.")
@@ -591,8 +586,11 @@ class RAGPipeline:
                         self.metrics.update("overall", "successful_files", len(all_files))
                         
                         # Update manifest with all files as directly processed
+                        # We don't need to do this anymore since the adapter updates the manifest on insertion
+                        # But we keep the timing for metrics
                         with PhaseTimer("Updating manifest with all files", self.metrics) as t:
-                            self._update_manifest(all_files, "direct_processing")
+                            # The adapter will handle manifest updates when files are added to the DB
+                            pass
                     else:
                         # Only process new files
                         logger.info(f"Processing {len(new_files)} new files")
@@ -627,9 +625,12 @@ class RAGPipeline:
                         self.metrics.update("overall", "failed_files", len(failed_files))
                         
                         # Update manifest with successfully processed files
+                        # We don't need to do this anymore since the adapter updates the manifest on insertion
+                        # But we keep the timing for metrics
                         if successful_files:
                             with PhaseTimer("Updating manifest with processed files", self.metrics) as t:
-                                self._update_manifest(successful_files, "direct_processing")
+                                # The adapter will handle manifest updates when files are added to the DB
+                                pass
                         logger.info(f"Processing complete. Successfully processed {len(successful_files)} files.")
                         if failed_files:
                             logger.error(f"Failed to process {len(failed_files)} files.")
@@ -751,7 +752,7 @@ class RAGPipeline:
         extractor = DocumentExtractor(raw_dir=raw_dir, processed_dir=processed_dir)
         chunker = SemanticChunker(processed_dir=processed_dir, chunks_dir=chunks_dir)
         embedder = DocumentEmbedder(chunks_dir=chunks_dir, embeddings_dir=embeddings_dir)
-        vector_store = SupabaseVectorStore()
+        vector_store = SupabaseVectorStore(manifest_path=args.manifest_path)
         
         # Create and run the pipeline
         pipeline = cls(
