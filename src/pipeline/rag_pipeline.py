@@ -364,7 +364,16 @@ class RAGPipeline:
                         self.metrics.increment("extraction", "failed_files")
                 
                 except Exception as e:
-                    logger.error(f"Error extracting {path}: {str(e)}")
+                    # Enhanced error logging with detailed information about the error and file
+                    error_type = type(e).__name__
+                    error_msg = f"Error extracting {path} ({extension} file, size: {os.path.getsize(path)/1024:.1f} KB): {str(e)}"
+                    
+                    # Include original exception details if available
+                    if hasattr(e, '__cause__') and e.__cause__:
+                        error_msg += f" | Caused by: {type(e.__cause__).__name__}: {e.__cause__}"
+                        
+                    logger.error(error_msg)
+                    
                     # Update metrics for failed extraction
                     self.metrics.increment("extraction", "failed_files")
         

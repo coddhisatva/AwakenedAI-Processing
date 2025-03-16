@@ -246,8 +246,10 @@ class DocumentExtractor:
                 raise ValueError(f"Failed to extract text from {file_path}, OCR error: {str(ocr_e)}")
         
         except Exception as e:
-            logger.error(f"Error processing PDF {file_path}: {str(e)}")
-            raise
+            # Instead of logging the error here, include detailed context in the exception
+            # This avoids duplicate logs but preserves all information
+            detailed_message = f"Error processing PDF {file_path}: {str(e)}"
+            raise ValueError(detailed_message) from e
     
     def extract_epub(self, file_path: Path) -> Dict[str, Any]:
         """
@@ -342,8 +344,10 @@ class DocumentExtractor:
                 raise ValueError(f"No text extracted from {file_path}")
         
         except Exception as e:
-            logger.error(f"Error processing EPUB {file_path}: {str(e)}")
-            raise
+            # Instead of logging the error here, include detailed context in the exception
+            # This avoids duplicate logs but preserves all information
+            detailed_message = f"Error processing EPUB {file_path}: {str(e)}"
+            raise ValueError(detailed_message) from e
     
     def _save_processed_document(self, output_path: Path, content: str, metadata: Dict[str, Any]) -> None:
         """
