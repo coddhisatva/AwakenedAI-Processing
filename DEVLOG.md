@@ -95,9 +95,21 @@
 - Now 5/8 non-dupes processed into db, 3 still fail
   - 38 files in db
 - Implement backup pdfminer for cases MyPDF2 can't handle 
-- 2/3 remaining files process succesfully
-  - 40 files in db
+  - Fall back happens succesfully
+- 2/3 remaining files still completely fail 
+  - Turns out they are corrupted
+    - (Magic Vol 1)
+    - (Tobacco Addiction)
+  - Still 38 files in db
 - Attempt to fix issue where NullObject in metadata causes doc to fail
+- Now the document gets added to the document table, but the actual chunks don't get added to the chunk table
+  - This is a new problem in and of itself
+  - Claims 39 docs in db, really 38
 
 ## Day 14
 - Catch up on dev log
+- Plan for proceeding:
+  - Figure how to solve doc/chunk dislink
+    - Can't leave db in bad state
+    - Can't leave code where it will in future leave db in bad state
+  - Implement md file which logs files that fail (likely corrupted), and group (subdir), pasing them over and marking them for later
