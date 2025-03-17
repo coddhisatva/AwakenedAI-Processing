@@ -24,17 +24,19 @@ logger = logging.getLogger(__name__)
 class DocumentExtractor:
     """Document extractor for PDF and EPUB files."""
     
-    def __init__(self, raw_dir: str, processed_dir: str):
+    def __init__(self, raw_dir: str, processed_dir: str, skip_ocr: bool = False):
         """
         Initialize the document extractor.
         
         Args:
             raw_dir: Directory containing raw documents
             processed_dir: Directory to store processed text
+            skip_ocr: Whether to skip OCR processing for PDFs
         """
         self.raw_dir = Path(raw_dir)
         self.processed_dir = Path(processed_dir)
         self.processed_dir.mkdir(exist_ok=True, parents=True)
+        self.skip_ocr = skip_ocr
         
         # Track processing statistics
         self.stats = {
@@ -124,8 +126,18 @@ class DocumentExtractor:
             except Exception as e:
                 logger.error(f"Error loading previously extracted file {output_path}: {e}")
                 return None
+                
+        # Create basic metadata structure
+        metadata = {
+            "filename": file_path.name,
+            "file_size": os.path.getsize(file_path),
+            "file_type": "pdf",
+            "ocr_applied": False,
+            "title": file_path.stem,  # Default title (will be overwritten if metadata is available)
+            "author": "Unknown"       # Default author (will be overwritten if metadata is available)
+        }
             
-        # First try regular PDF extraction
+        # Step 1: Try regular PDF extraction with PyPDF2
         try:
             # Extract text using PyPDF2
             with open(file_path, 'rb') as file:
@@ -155,19 +167,11 @@ class DocumentExtractor:
                     except Exception as page_access_err:
                         logger.warning(f"Error accessing page {i+1} of {file_path.name}: {page_access_err}")
                 
+                # Update metadata with page count
+                metadata["num_pages"] = num_pages
+                
                 # Extract document information from PDF metadata
                 pdf_info = reader.metadata
-                
-                # Create metadata with enhanced document information
-                metadata = {
-                    "filename": file_path.name,
-                    "file_size": os.path.getsize(file_path),
-                    "num_pages": num_pages,
-                    "file_type": "pdf",
-                    "ocr_applied": False,
-                    "title": file_path.stem,  # Default title (will be overwritten if metadata is available)
-                    "author": "Unknown"       # Default author (will be overwritten if metadata is available)
-                }
                 
                 # Try to add PDF metadata if available, with robust error handling
                 if pdf_info:
@@ -185,7 +189,7 @@ class DocumentExtractor:
                     except Exception as metadata_err:
                         logger.warning(f"Error extracting author metadata from {file_path.name}: {metadata_err}")
                 
-                # If text was extracted, save it
+                # If text was extracted successfully, save it and return
                 if text.strip():
                     self._save_processed_document(output_path, text, metadata)
                     self.stats["successful"] += 1
@@ -199,118 +203,115 @@ class DocumentExtractor:
                         "chapter": None
                     }
                 
-                logger.info(f"No text extracted with PyPDF2 for {file_path.name}, attempting OCR")
-            
-            # If no text was extracted, try OCR
-            try:
-                # Create a temporary file for OCR output
-                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
-                    temp_output_path = temp_file.name
-                
-                # Use OCRmyPDF to add text layer to the PDF
-                try:
-                    import ocrmypdf
-                    ocrmypdf.ocr(
-                        input_file=str(file_path),
-                        output_file=temp_output_path,
-                        skip_text=True,  # Skip pages that already have text
-                        deskew=True,     # Straighten pages
-                        force_ocr=False  # Only apply OCR where needed
-                    )
-                except ImportError:
-                    # If ocrmypdf is not available as a module, try command line
-                    cmd = ['ocrmypdf', '--skip-text', '--deskew', str(file_path), temp_output_path]
-                    subprocess.run(cmd, check=True)
-                
-                # Extract text from the OCR'd PDF
-                with open(temp_output_path, 'rb') as file:
-                    reader = PyPDF2.PdfReader(file)
-                    text = ""
-                    num_pages = len(reader.pages)
-                    
-                    for i in range(num_pages):
-                        try:
-                            page = reader.pages[i]
-                            try:
-                                page_text = page.extract_text()
-                                if page_text:
-                                    text += page_text + "\n\n"
-                            except Exception as page_err:
-                                logger.warning(f"Error extracting text from OCR'd page {i+1} of {file_path.name}: {page_err}")
-                        except Exception as page_access_err:
-                            logger.warning(f"Error accessing OCR'd page {i+1} of {file_path.name}: {page_access_err}")
-                
-                # Update metadata to indicate OCR was applied
-                metadata["ocr_applied"] = True
-                self.stats["by_type"]["pdf"]["ocr_applied"] += 1
-                
-                # Delete the temporary file
-                os.unlink(temp_output_path)
-                
-                # Save the extracted content and metadata
-                if text.strip():
-                    self._save_processed_document(output_path, text, metadata)
-                    self.stats["successful"] += 1
-                    self.stats["by_type"]["pdf"]["processed"] += 1
-                    # Return in the format expected by the pipeline
-                    return {
-                        "text": text,
-                        "source": file_path.name,
-                        "title": metadata.get("title", file_path.stem),
-                        "page": None,
-                        "chapter": None
-                    }
-                else:
-                    logger.warning(f"No text extracted from {file_path} even after OCR")
-                    raise ValueError(f"No text extracted from {file_path} even after OCR")
-                
-            except Exception as ocr_e:
-                logger.error(f"OCR processing failed for {file_path}: {str(ocr_e)}")
-                raise ValueError(f"Failed to extract text from {file_path}, OCR error: {str(ocr_e)}")
-        
+                logger.info(f"No text extracted with PyPDF2 for {file_path.name}, trying pdfminer")
         except Exception as e:
-            # Try pdfminer.six as a fallback
-            logger.warning(f"PyPDF2 extraction failed for {file_path.name}: {str(e)}. Attempting pdfminer.six fallback.")
+            logger.warning(f"PyPDF2 extraction failed for {file_path.name}: {str(e)}")
+            # Don't return or raise here, continue to pdfminer
+        
+        # Step 2: Try pdfminer.six as a fallback
+        try:
+            # Try to extract with pdfminer.six
+            pdfminer_text = self._extract_pdf_with_pdfminer(file_path)
+            
+            if pdfminer_text.strip():
+                # Save the extracted content
+                self._save_processed_document(output_path, pdfminer_text, metadata)
+                self.stats["successful"] += 1
+                self.stats["by_type"]["pdf"]["processed"] += 1
+                
+                # Return in the format expected by the pipeline
+                return {
+                    "text": pdfminer_text,
+                    "source": file_path.name,
+                    "title": metadata.get("title", file_path.stem),
+                    "page": None,
+                    "chapter": None
+                }
+            
+            logger.warning(f"No text extracted with pdfminer.six for {file_path.name}")
+        except Exception as pdfminer_e:
+            logger.warning(f"pdfminer.six extraction failed for {file_path.name}: {str(pdfminer_e)}")
+            # Don't return or raise here, check if we should try OCR
+        
+        # Step 3: If both PyPDF2 and pdfminer failed, check if OCR should be attempted
+        if self.skip_ocr:
+            logger.info(f"Skipping OCR for {file_path.name} as per skip_ocr flag")
+            # Not counting as failed, just returning None
+            return None
+            
+        # Step 4: If OCR is allowed, try it as last resort
+        logger.info(f"PyPDF2 and pdfminer.six failed to extract text from {file_path.name}, attempting OCR")
+        try:
+            # Create a temporary file for OCR output
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
+                temp_output_path = temp_file.name
+            
+            # Use OCRmyPDF to add text layer to the PDF
             try:
-                # Try to extract with pdfminer.six
-                pdfminer_text = self._extract_pdf_with_pdfminer(file_path)
+                import ocrmypdf
+                ocrmypdf.ocr(
+                    input_file=str(file_path),
+                    output_file=temp_output_path,
+                    skip_text=True,  # Skip pages that already have text
+                    deskew=True,     # Straighten pages
+                    force_ocr=False  # Only apply OCR where needed
+                )
+            except ImportError:
+                # If ocrmypdf is not available as a module, try command line
+                cmd = ['ocrmypdf', '--skip-text', '--deskew', str(file_path), temp_output_path]
+                subprocess.run(cmd, check=True)
+            
+            # Extract text from the OCR'd PDF
+            with open(temp_output_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
+                text = ""
+                num_pages = len(reader.pages)
                 
-                if pdfminer_text.strip():
-                    # Create basic metadata since we couldn't get it from PyPDF2
-                    metadata = {
-                        "filename": file_path.name,
-                        "file_size": os.path.getsize(file_path),
-                        "file_type": "pdf",
-                        "ocr_applied": False,
-                        "title": file_path.stem,
-                        "author": "Unknown"
-                    }
-                    
-                    # Save the extracted content
-                    self._save_processed_document(output_path, pdfminer_text, metadata)
-                    self.stats["successful"] += 1
-                    self.stats["by_type"]["pdf"]["processed"] += 1
-                    
-                    # Return in the format expected by the pipeline
-                    return {
-                        "text": pdfminer_text,
-                        "source": file_path.name,
-                        "title": file_path.stem,
-                        "page": None,
-                        "chapter": None
-                    }
-                
-                # If pdfminer.six also failed to extract text, then try OCR or fail
-                logger.warning(f"No text extracted with pdfminer.six for {file_path.name}")
-                
-                # Here we could add OCR as a last resort, but for now we'll just fail
-                detailed_message = f"Error processing PDF {file_path}: {str(e)} and pdfminer.six failed to extract text"
-                raise ValueError(detailed_message) from e
-                
-            except Exception as pdfminer_e:
-                # Both PyPDF2 and pdfminer.six failed
-                detailed_message = f"Error processing PDF {file_path}: PyPDF2 error: {str(e)}, pdfminer.six error: {str(pdfminer_e)}"
-                raise ValueError(detailed_message) from e
+                for i in range(num_pages):
+                    try:
+                        page = reader.pages[i]
+                        try:
+                            page_text = page.extract_text()
+                            if page_text:
+                                text += page_text + "\n\n"
+                        except Exception as page_err:
+                            logger.warning(f"Error extracting text from OCR'd page {i+1} of {file_path.name}: {page_err}")
+                    except Exception as page_access_err:
+                        logger.warning(f"Error accessing OCR'd page {i+1} of {file_path.name}: {page_access_err}")
+            
+            # Update metadata to indicate OCR was applied
+            metadata["ocr_applied"] = True
+            # Update the num_pages field in case it wasn't set earlier
+            metadata["num_pages"] = num_pages
+            self.stats["by_type"]["pdf"]["ocr_applied"] += 1
+            
+            # Delete the temporary file
+            os.unlink(temp_output_path)
+            
+            # Save the extracted content and metadata
+            if text.strip():
+                self._save_processed_document(output_path, text, metadata)
+                self.stats["successful"] += 1
+                self.stats["by_type"]["pdf"]["processed"] += 1
+                # Return in the format expected by the pipeline
+                return {
+                    "text": text,
+                    "source": file_path.name,
+                    "title": metadata.get("title", file_path.stem),
+                    "page": None,
+                    "chapter": None
+                }
+            else:
+                logger.warning(f"No text extracted from {file_path} even after OCR")
+                self.stats["by_type"]["pdf"]["failed"] += 1
+                self.stats["failed"] += 1
+                raise ValueError(f"No text extracted from {file_path} even after OCR")
+            
+        except Exception as ocr_e:
+            logger.error(f"OCR processing failed for {file_path}: {str(ocr_e)}")
+            self.stats["by_type"]["pdf"]["failed"] += 1
+            self.stats["failed"] += 1
+            raise ValueError(f"Failed to extract text from {file_path}, OCR error: {str(ocr_e)}")
     
     def extract_epub(self, file_path: Path) -> Dict[str, Any]:
         """

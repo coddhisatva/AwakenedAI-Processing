@@ -123,11 +123,16 @@
   - 39 docs in db
 
 
-- Tried to make anti-manifest (tracking failed files)
-  - as well as adding subdir (batch_id) to manifest
-  - but ai refactored everything, got messy
-  - save for later
-
--Next::: We should be ready to process, lets just make sure we manually track failed docs 
-
-Goodnight!
+## Day 15
+- Anti-manifest works and doesn't make dupes
+- 2 corrupt files from 1A are now in anti-manifest
+- We are done with 1A now
+  - 39 files in db (good)
+- Running proc on 1B (100 files), skipping ocr
+- 97 processed
+  - 1 had no texxt (no chunks, dan koe quarterly)
+  - 1 was DS Store
+  - Last one had PDF extension rather than pdf
+- make change to capture all upper-case extensions
+- Got it, all of 1B processed that we need (Dan koe has no text anyway)
+- 132 docs in db now

@@ -139,34 +139,6 @@ class RAGPipeline:
         except Exception as e:
             logger.error(f"Error updating manifest file: {e}")
     
-    def _needs_ocr(self, file_path: Path) -> bool:
-        """
-        Check if a PDF file likely needs OCR processing.
-        
-        Args:
-            file_path: Path to the PDF file
-            
-        Returns:
-            True if the file likely needs OCR, False otherwise
-        """
-        if file_path.suffix.lower() != '.pdf':
-            return False
-            
-        # Simple check based on filename patterns for known OCR-needing files
-        ocr_patterns = [
-            "frank-rudolph-young",
-            "cyclomancy",
-            "yoga-for-men-only"
-        ]
-        
-        for pattern in ocr_patterns:
-            if pattern.lower() in file_path.name.lower():
-                return True
-                
-        # For other files, we'd need to actually check if text can be extracted
-        # This is a simple approximation for this script
-        return False
-    
     def _find_all_files(self, directory_path: Path, extensions: List[str]) -> Tuple[List[Path], int]:
         """
         Get all files with the specified extensions in the directory.
@@ -180,20 +152,12 @@ class RAGPipeline:
         """
         all_files = []
         for ext in extensions:
-            all_files.extend(list(directory_path.glob(f"**/*.{ext}")))
+            # Check for both lowercase and uppercase versions of the extension
+            all_files.extend(list(directory_path.glob(f"**/*.{ext.lower()}")))
+            all_files.extend(list(directory_path.glob(f"**/*.{ext.upper()}")))
         
-        # Skip OCR files if requested
-        skipped_ocr_count = 0
-        if self.skip_ocr:
-            # Find OCR-needing files
-            ocr_files = [f for f in all_files if self._needs_ocr(f)]
-            
-            if ocr_files:
-                logger.info(f"Skipping {len(ocr_files)} files that need OCR: {', '.join(f.name for f in ocr_files)}")
-                all_files = [f for f in all_files if f not in ocr_files]
-                skipped_ocr_count = len(ocr_files)
-        
-        return all_files, skipped_ocr_count
+        # No pre-filtering for OCR needed anymore, just return all files
+        return all_files, 0
     
     def _categorize_files(self, files: List[Path], force_reprocess: bool = False) -> Tuple[List[Path], List[Path], List[Path]]:
         """
@@ -874,7 +838,7 @@ class RAGPipeline:
         parser.add_argument(
             "--skip_ocr",
             action="store_true",
-            help="Skip files that need OCR processing"
+            help="Skip OCR processing for files that fail text extraction"
         )
         parser.add_argument(
             "--manifest_path",
@@ -910,7 +874,7 @@ class RAGPipeline:
             dir_path.mkdir(exist_ok=True, parents=True)
         
         # Initialize components
-        extractor = DocumentExtractor(raw_dir=raw_dir, processed_dir=processed_dir)
+        extractor = DocumentExtractor(raw_dir=raw_dir, processed_dir=processed_dir, skip_ocr=args.skip_ocr)
         chunker = SemanticChunker(processed_dir=processed_dir, chunks_dir=chunks_dir)
         embedder = DocumentEmbedder(chunks_dir=chunks_dir, embeddings_dir=embeddings_dir)
         vector_store = SupabaseVectorStore(manifest_path=args.manifest_path)
