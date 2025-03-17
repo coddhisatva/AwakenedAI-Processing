@@ -48,6 +48,7 @@ class PipelineMetrics:
             "successful_files": 0,
             "failed_files": 0,
             "total_chunks": 0,
+            "failed_manifest_files": 0,
             
             # Phase-specific metrics
             "phases": {
@@ -198,6 +199,8 @@ class PipelineMetrics:
             logger.info(f"Files skipped due to OCR: {self.stats['skipped_ocr_files']}")
         logger.info(f"Files in manifest: {self.stats['manifest_files']}")
         logger.info(f"Files in database: {self.stats['database_files']}")
+        if self.stats.get("failed_manifest_files", 0) > 0:
+            logger.info(f"Files in failed manifest: {self.stats['failed_manifest_files']}")
         logger.info(f"New files: {self.stats['new_files']}")
         logger.info(f"Successfully processed: {self.stats['successful_files']}")
         if self.stats.get("failed_files", 0) > 0:

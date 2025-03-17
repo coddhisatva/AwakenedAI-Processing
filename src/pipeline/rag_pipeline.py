@@ -84,6 +84,10 @@ class RAGPipeline:
         # Load manifest
         self.manifest = self._load_manifest()
         
+        # Initialize failed documents manifest as None (will be set during processing)
+        self.failed_manifest_path = None
+        self.failed_manifest = {}
+        
         logger.info("RAG Pipeline initialized with all components")
     
     def _load_manifest(self) -> Dict[str, Dict[str, Any]]:
@@ -198,6 +202,8 @@ class RAGPipeline:
         2. Not in manifest but in database (add to manifest as database_duplicate)
         3. Not in manifest and not in database (process normally)
         
+        Files in the failed documents manifest will be skipped unless force_reprocess is True.
+        
         Args:
             files: List of file paths to categorize
             force_reprocess: Whether to process all files regardless of manifest
@@ -208,21 +214,28 @@ class RAGPipeline:
         manifest_files = []
         database_files = []
         new_files = []
+        failed_files = []
         
         # Get set of filenames already in manifest
         manifest_filenames = set(self.manifest.keys())
+        
+        # Get set of filenames already in failed manifest
+        failed_filenames = set(self.failed_manifest.keys()) if hasattr(self, 'failed_manifest') else set()
         
         # Stats for timing database checks
         db_check_count = 0
         db_match_count = 0
         
-        # First pass: identify files in manifest
+        # First pass: identify files in manifest or failed manifest
         with PhaseTimer("Manifest check", self.metrics) as manifest_timer:
             for file_path in files:
                 if file_path.name in manifest_filenames and not force_reprocess:
                     manifest_files.append(file_path)
+                elif file_path.name in failed_filenames and not force_reprocess:
+                    failed_files.append(file_path)
+                    logger.info(f"Skipping previously failed file: {file_path.name}")
                 else:
-                    # For files not in manifest or being forced to reprocess, 
+                    # For files not in manifest/failed manifest or being forced to reprocess, 
                     # check if they're in database
                     db_check_count += 1
                     existing_doc = None
@@ -242,12 +255,18 @@ class RAGPipeline:
         if database_files:
             logger.info(f"Found {len(database_files)} files in database but not in manifest")
         
+        if failed_files:
+            logger.info(f"Found {len(failed_files)} files in failed documents manifest (will be skipped)")
+            
         if db_check_count > 0:
             avg_db_check_time = manifest_timer.elapsed / db_check_count if db_check_count > 0 else 0
             logger.info(f"Performed {db_check_count} database checks, found {db_match_count} matches")
             logger.info(f"Average database check time: {avg_db_check_time:.4f} seconds")
             
         logger.info(f"Found {len(new_files)} new files to process")
+        
+        # Update metrics for failed files
+        self.metrics.update("overall", "failed_manifest_files", len(failed_files))
         
         return manifest_files, database_files, new_files
     
@@ -315,6 +334,7 @@ class RAGPipeline:
             Number of chunks created and stored
         """
         extracted_docs = []
+        failed_files = []
         
         # Process each file and extract text
         with PhaseTimer("Extraction", self.metrics, phase="extraction") as extraction_timer:
@@ -362,6 +382,7 @@ class RAGPipeline:
                         # Update metrics for failed extraction
                         logger.error(f"Failed to extract content from {path}")
                         self.metrics.increment("extraction", "failed_files")
+                        failed_files.append(path)
                 
                 except Exception as e:
                     # Enhanced error logging with detailed information about the error and file
@@ -376,9 +397,14 @@ class RAGPipeline:
                     
                     # Update metrics for failed extraction
                     self.metrics.increment("extraction", "failed_files")
+                    failed_files.append(path)
         
         # Process the extracted documents
         logger.info(f"Extracted {len(extracted_docs)} documents")
+        
+        # Update failed manifest with files that failed during extraction
+        if failed_files:
+            self._update_failed_manifest(failed_files, "Extraction error")
         
         # Generate chunks, embeddings, and store in vector database
         total_chunks = self._process_extracted_docs(extracted_docs, batch_size)
@@ -401,6 +427,7 @@ class RAGPipeline:
         """
         total_chunks = 0
         doc_ids = []
+        failed_docs = []  # Track documents that fail in any stage
         
         # Process documents in batches
         for i in range(0, len(extracted_docs), batch_size):
@@ -431,11 +458,21 @@ class RAGPipeline:
                         self.metrics.increment("chunking", "successful_documents")
                         self.metrics.increment("chunking", "chunks_created", len(chunks))
                     except Exception as e:
-                        logger.error(f"Error creating chunks for {doc['source']}: {str(e)}")
+                        error_msg = f"Error creating chunks for {doc['source']}: {str(e)}"
+                        logger.error(error_msg)
                         self.metrics.increment("chunking", "failed_documents")
+                        # Add to failed docs list
+                        failed_docs.append(Path(doc["source"]))
+                        # Update failed manifest immediately
+                        self._update_failed_manifest([Path(doc["source"])], f"Chunking error: {str(e)}")
             
             logger.info(f"Created {len(all_chunks)} chunks from batch")
             
+            # If no chunks were created, skip to the next batch
+            if not all_chunks:
+                logger.warning("No chunks created in this batch. Skipping to next batch.")
+                continue
+                
             # Check for and split large chunks before embedding
             token_safe_chunks = []
             with PhaseTimer("Token checking", self.metrics, phase="chunking") as token_timer:
@@ -479,9 +516,23 @@ class RAGPipeline:
                     
                     logger.info(f"Created embeddings for {len(embedded_chunks)} chunks using batch processing")
                 except Exception as e:
-                    logger.error(f"Error generating embeddings: {str(e)}")
+                    error_msg = f"Error generating embeddings: {str(e)}"
+                    logger.error(error_msg)
                     embedded_chunks = []
                     self.metrics.increment("embedding", "failed_chunks", len(token_safe_chunks))
+                    
+                    # Add all sources from this batch to failed docs
+                    sources = set()
+                    for chunk in token_safe_chunks:
+                        if "metadata" in chunk and "source" in chunk["metadata"]:
+                            sources.add(chunk["metadata"]["source"])
+                    
+                    # Update failed manifest with the sources
+                    for source in sources:
+                        failed_docs.append(Path(source))
+                    
+                    if sources:
+                        self._update_failed_manifest([Path(s) for s in sources], f"Embedding error: {str(e)}")
             
             # Store chunks in vector database using the correct method
             ids = []
@@ -505,13 +556,33 @@ class RAGPipeline:
                         
                         logger.info(f"Stored {len(ids)} chunks in vector database")
                     except Exception as e:
-                        logger.error(f"Error storing chunks: {str(e)}")
+                        error_msg = f"Error storing chunks: {str(e)}"
+                        logger.error(error_msg)
                         self.metrics.increment("storage", "failed_chunks", len(embedded_chunks))
+                        
+                        # Add all sources from this batch to failed docs
+                        sources = set()
+                        for chunk in embedded_chunks:
+                            if "metadata" in chunk and "source" in chunk["metadata"]:
+                                sources.add(chunk["metadata"]["source"])
+                        
+                        # Update failed manifest with the sources
+                        for source in sources:
+                            failed_docs.append(Path(source))
+                        
+                        if sources:
+                            self._update_failed_manifest([Path(s) for s in sources], f"Storage error: {str(e)}")
             
         # Update the total chunks count in the overall metrics
         self.metrics.update("overall", "total_chunks", total_chunks)
         
-        logger.info(f"Pipeline processing complete. Total chunks stored: {total_chunks}")
+        # Log the number of failed documents
+        if failed_docs:
+            failed_doc_count = len(set(str(doc) for doc in failed_docs))
+            logger.info(f"Pipeline processing complete. Total chunks stored: {total_chunks}. Failed documents: {failed_doc_count}")
+        else:
+            logger.info(f"Pipeline processing complete. Total chunks stored: {total_chunks}")
+            
         return total_chunks
     
     def process_directory(self, directory_path: str, batch_size: int = 5, 
@@ -540,6 +611,12 @@ class RAGPipeline:
             with PhaseTimer("Finding files", self.metrics) as t:
                 input_dir = Path(directory_path)
                 all_files, skipped_ocr_count = self._find_all_files(input_dir, extensions)
+            
+            # Extract the subdirectory name from the directory path
+            subdir = Path(directory_path).name
+            
+            # Load the failed documents manifest for this subdirectory
+            self.failed_manifest = self._load_failed_manifest(subdir)
             
             if not all_files:
                 logger.error(f"No files found with extensions {extensions} in {input_dir}")
@@ -627,8 +704,11 @@ class RAGPipeline:
                                 successful_files = new_files
                                 self.metrics.update("overall", "total_chunks", total_chunks)
                             except Exception as e:
-                                logger.error(f"Error processing directory: {e}")
+                                error_msg = f"Error processing directory: {e}"
+                                logger.error(error_msg)
                                 failed_files = new_files
+                                # Update failed manifest with the failed files
+                                self._update_failed_manifest(failed_files, f"Directory processing error: {str(e)}")
                         
                         self.metrics.update("overall", "successful_files", len(successful_files))
                         self.metrics.update("overall", "failed_files", len(failed_files))
@@ -645,11 +725,20 @@ class RAGPipeline:
                             logger.error(f"Failed to process {len(failed_files)} files.")
                 
                 except Exception as e:
-                    logger.error(f"Error processing documents: {e}")
+                    error_msg = f"Error processing documents: {e}"
+                    logger.error(error_msg)
+                    # If there was an error at this level, mark all new files as failed
+                    if new_files:
+                        self._update_failed_manifest(new_files, error_msg)
+                        self.metrics.update("overall", "failed_files", len(new_files))
                     raise
             
         except Exception as e:
-            logger.error(f"Error in main processing: {e}")
+            error_msg = f"Error in main processing: {e}"
+            logger.error(error_msg)
+            # If we have the subdirectory loaded and there are files, mark them as failed
+            if hasattr(self, 'failed_manifest_path') and self.failed_manifest_path and all_files:
+                self._update_failed_manifest(all_files, error_msg)
         
         # Log performance summary
         self._log_performance_summary()
@@ -679,6 +768,69 @@ class RAGPipeline:
         """
         logger.info(f"Querying RAG pipeline: '{query_text}'")
         return self.vector_store.search(query_text, k, filter_dict)
+
+    def _load_failed_manifest(self, subdir: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Load the manifest of failed documents for a specific subdirectory.
+        
+        Args:
+            subdir: Subdirectory name (e.g., 'group0A')
+            
+        Returns:
+            Dictionary with filenames as keys and failure metadata as values
+        """
+        # Set up the failed documents directory and file path
+        failed_dir = Path(os.path.join("data", "failed", subdir))
+        self.failed_manifest_path = failed_dir / "failed_documents.json"
+        
+        # Create directory if it doesn't exist
+        failed_dir.mkdir(exist_ok=True, parents=True)
+        
+        if not self.failed_manifest_path.exists():
+            logger.info(f"No failed manifest file found at {self.failed_manifest_path}. Creating a new one.")
+            return {}
+        
+        try:
+            with open(self.failed_manifest_path, 'r') as f:
+                failed_manifest = json.load(f)
+            logger.info(f"Loaded failed manifest with {len(failed_manifest)} failed documents.")
+            return failed_manifest
+        except Exception as e:
+            logger.error(f"Error loading failed manifest file: {e}")
+            return {}
+    
+    def _update_failed_manifest(self, files: List[Path], error_message: str) -> None:
+        """
+        Update the failed documents manifest with new failed files.
+        
+        Args:
+            files: List of file paths that failed to process
+            error_message: Error message or reason for failure
+        """
+        if not self.failed_manifest_path:
+            logger.error("Failed manifest path not set. Cannot update failed manifest.")
+            return
+            
+        count = 0
+        
+        # Update the failed manifest with new files
+        for file_path in files:
+            if file_path.name not in self.failed_manifest:
+                self.failed_manifest[file_path.name] = {
+                    "filepath": str(file_path),
+                    "failed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "error": error_message
+                }
+                count += 1
+        
+        # Write the updated failed manifest
+        try:
+            with open(self.failed_manifest_path, 'w') as f:
+                json.dump(self.failed_manifest, f, indent=2)
+            if count > 0:
+                logger.info(f"Updated failed manifest file with {count} new failed documents.")
+        except Exception as e:
+            logger.error(f"Error updating failed manifest file: {e}")
 
     @classmethod
     def run_cli(cls):
