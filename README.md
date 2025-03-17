@@ -347,6 +347,16 @@ The LLM integration provides AI-generated responses based on retrieved context:
 - [Performance Metrics System](METRICS.md) - Detailed guide to the metrics framework
 - [Development Log](DEVLOG.md) - Ongoing development notes and progress
 
+## Running the Pipeline
+
+To run the processing pipeline, use the following command:
+
+```bash
+source venv/bin/activate && python -m src.pipeline.rag_pipeline --subdir <subdir>
+```
+
+Replace `<subdir>` with the specific subdirectory you want to process from the `data/raw/` directory. This is the default and recommended way to run the pipeline. Additional parameters can be added as needed, but specifying the subdirectory is the only required change.
+
 ## Scaling Considerations
 
 - Implementation of EPUB support for remaining document types
