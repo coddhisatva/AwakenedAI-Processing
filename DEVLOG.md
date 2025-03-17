@@ -62,3 +62,42 @@
 ## Day 8
 - Fixed some stuff; 31/33 documents (non-ocr) now succesfully in the db
   - Need to batch them at embedding and storage so it doesn't take hours
+
+## Day 9
+- Intended to implement embedding and storage stage batching, failed and refactored to try again next day
+
+## Day 10
+- Implemented embedding and storage stage batching
+- Overhauled metrics
+- last 2 of original 33 docs processed to test stage batching
+- 33 docs now in db
+
+## Day 11
+- Remove extraneous metadata
+ ( Waiting on more files to proceed with processing )
+
+## Day 12
+- 446 more files received
+- group raw files into directories
+  - group0A, first 33 files
+  - sorted the 446 into 3 groups, 1A, 1B, and 1C, with 10, 100, 336 files each, to catch problems before expanding scope
+- Rag pipeline runs from subdir, not just data/raw
+- Process level batching to prevent system memory issues
+- Try once on 1A (10 files)
+  - 2 are already in db (dupes from 0A)
+  - Other 8 all fail, but are still added to manifest
+    - To debug next day
+
+## Day 13
+- Debug processing:
+- Fix processing issue, introduced by subdir change, by switching to absolute paths
+- Fix issue where failed-to-process docs still get added to manifest
+- Now 5/8 non-dupes processed into db, 3 still fail
+  - 38 files in db
+- Implement backup pdfminer for cases MyPDF2 can't handle 
+- 2/3 remaining files process succesfully
+  - 40 files in db
+- Attempt to fix issue where NullObject in metadata causes doc to fail
+
+## Day 14
+- Catch up on dev log
