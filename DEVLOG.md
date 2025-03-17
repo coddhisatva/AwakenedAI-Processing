@@ -119,3 +119,15 @@
   - if chunk fails insertion to table, previous chunks get deleted from table,
   - Only add to manifest after all succeed
   - Tested: rollback worked (on doc at least), but we still need sanitation for null chars in pdf
+- Sanitized null chars, Breakthrough doc processes now
+  - 39 docs in db
+
+
+- Tried to make anti-manifest (tracking failed files)
+  - as well as adding subdir (batch_id) to manifest
+  - but ai refactored everything, got messy
+  - save for later
+
+-Next::: We should be ready to process, lets just make sure we manually track failed docs 
+
+Goodnight!
