@@ -25,13 +25,6 @@ var/
 .installed.cfg
 *.egg
 
-# Data directories
-data/raw/
-data/processed/
-data/chunks/
-data/embeddings/
-data/vectordb/
-
 # Logs
 *.log
 

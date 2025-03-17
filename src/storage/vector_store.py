@@ -357,84 +357,106 @@ class SupabaseVectorStore(VectorStoreBase):
             try:
                 # Process each document
                 for filepath, doc_info in docs_by_filepath.items():
-                    # Check if we already have this document based on filepath
+                    # Variable to track document ID
                     doc_id = None
-                    if filepath:
-                        existing_doc = self.adapter.get_document_by_filepath(filepath)
-                        if existing_doc:
-                            doc_id = existing_doc["id"]
-                            logger.info(f"Document {filepath} already exists in database, using existing document ID")
                     
-                    # Add document if it doesn't exist
-                    if doc_id is None:
-                        doc_id = self.adapter.add_document(
-                            title=doc_info["title"],
-                            author=doc_info["author"],
-                            filepath=doc_info["filepath"],
-                            batch_id=doc_info["batch_id"]  # Pass batch_id
-                        )
-                    
-                    # Prepare chunks for batch insertion
-                    chunks_to_insert = []
-                    for chunk in doc_info["chunks"]:
-                        chunks_to_insert.append({
-                            "document_id": doc_id,
-                            "content": chunk["content"],
-                            "metadata": chunk["metadata"],
-                            "embedding": chunk["embedding"]
-                        })
-                    
-                    # Insert chunks in batches of max_batch_size
-                    total_insertion_time = 0
-                    total_chunks_inserted = 0
-                    
-                    for i in range(0, len(chunks_to_insert), max_batch_size):
-                        batch = chunks_to_insert[i:i+max_batch_size]
-                        batch_sizes.append(len(batch))
-                        total_batches += 1
+                    try:
+                        # Check if we already have this document based on filepath
+                        if filepath:
+                            existing_doc = self.adapter.get_document_by_filepath(filepath)
+                            if existing_doc:
+                                doc_id = existing_doc["id"]
+                                logger.info(f"Document {filepath} already exists in database, using existing document ID")
                         
-                        # Log batch information
-                        batch_num = i // max_batch_size + 1
-                        total_batches_for_doc = (len(chunks_to_insert) - 1) // max_batch_size + 1
-                        logger.info(f"Inserting batch {batch_num}/{total_batches_for_doc} with {len(batch)} chunks for document {doc_info['title']}")
+                        # Add document if it doesn't exist
+                        if doc_id is None:
+                            doc_id = self.adapter.add_document(
+                                title=doc_info["title"],
+                                author=doc_info["author"],
+                                filepath=doc_info["filepath"],
+                                batch_id=doc_info["batch_id"]
+                            )
+                            logger.info(f"Created new document in database with ID {doc_id}")
                         
-                        # Create a batch-specific timer if using unified metrics
-                        batch_timer_context = (
-                            PhaseTimer(f"Batch insertion {batch_num}", self.unified_metrics, phase="storage")
-                            if self.unified_metrics and PhaseTimer
-                            else None
-                        )
+                        # Prepare chunks for batch insertion
+                        chunks_to_insert = []
+                        for chunk in doc_info["chunks"]:
+                            chunks_to_insert.append({
+                                "document_id": doc_id,
+                                "content": chunk["content"],
+                                "metadata": chunk["metadata"],
+                                "embedding": chunk["embedding"]
+                            })
                         
-                        # Measure insertion time
-                        start_time = time.time()
-                        if batch_timer_context:
-                            batch_timer_context.__enter__()
+                        # Insert chunks in batches of max_batch_size
+                        total_insertion_time = 0
+                        total_chunks_inserted = 0
                         
-                        try:
-                            # Insert the batch
-                            chunk_ids = self.adapter.add_chunks_batch(batch)
-                            all_chunk_ids.extend(chunk_ids)
+                        for i in range(0, len(chunks_to_insert), max_batch_size):
+                            batch = chunks_to_insert[i:i+max_batch_size]
+                            batch_sizes.append(len(batch))
+                            total_batches += 1
                             
-                            # Update storage success metrics
-                            if self.unified_metrics:
-                                self.unified_metrics.increment("storage", "successful_chunks", len(chunk_ids))
-                        finally:
-                            # Calculate metrics
+                            # Log batch information
+                            batch_num = i // max_batch_size + 1
+                            total_batches_for_doc = (len(chunks_to_insert) - 1) // max_batch_size + 1
+                            logger.info(f"Inserting batch {batch_num}/{total_batches_for_doc} with {len(batch)} chunks for document {doc_info['title']}")
+                            
+                            # Create a batch-specific timer if using unified metrics
+                            batch_timer_context = (
+                                PhaseTimer(f"Batch insertion {batch_num}", self.unified_metrics, phase="storage")
+                                if self.unified_metrics and PhaseTimer
+                                else None
+                            )
+                            
+                            # Measure insertion time
+                            start_time = time.time()
                             if batch_timer_context:
-                                batch_timer_context.__exit__(None, None, None)
-                            end_time = time.time()
-                            batch_time = end_time - start_time
-                            total_insertion_time += batch_time
-                            total_chunks_inserted += len(batch)
+                                batch_timer_context.__enter__()
                             
-                            chunks_per_second = len(batch) / batch_time if batch_time > 0 else 0
-                            
-                            logger.info(f"Batch {batch_num}/{total_batches_for_doc} insertion completed in {batch_time:.2f}s ({chunks_per_second:.2f} chunks/second)")
+                            try:
+                                # Insert the batch
+                                chunk_ids = self.adapter.add_chunks_batch(batch)
+                                all_chunk_ids.extend(chunk_ids)
+                                
+                                # Update storage success metrics
+                                if self.unified_metrics:
+                                    self.unified_metrics.increment("storage", "successful_chunks", len(chunk_ids))
+                            finally:
+                                # Calculate metrics
+                                if batch_timer_context:
+                                    batch_timer_context.__exit__(None, None, None)
+                                end_time = time.time()
+                                batch_time = end_time - start_time
+                                total_insertion_time += batch_time
+                                total_chunks_inserted += len(batch)
+                                
+                                chunks_per_second = len(batch) / batch_time if batch_time > 0 else 0
+                                
+                                logger.info(f"Batch {batch_num}/{total_batches_for_doc} insertion completed in {batch_time:.2f}s ({chunks_per_second:.2f} chunks/second)")
+                        
+                        # Log overall performance for this document
+                        if total_insertion_time > 0 and total_chunks_inserted > 0:
+                            avg_chunks_per_second = total_chunks_inserted / total_insertion_time
+                            logger.info(f"Document '{doc_info['title']}' processing completed: {total_chunks_inserted} chunks inserted in {total_insertion_time:.2f}s ({avg_chunks_per_second:.2f} chunks/second)")
+                        
+                        # Update manifest only after all chunks are successfully inserted
+                        self.adapter.update_manifest(filepath)
                     
-                    # Log overall performance for this document
-                    if total_insertion_time > 0 and total_chunks_inserted > 0:
-                        avg_chunks_per_second = total_chunks_inserted / total_insertion_time
-                        logger.info(f"Document '{doc_info['title']}' processing completed: {total_chunks_inserted} chunks inserted in {total_insertion_time:.2f}s ({avg_chunks_per_second:.2f} chunks/second)")
+                    except Exception as e:
+                        logger.error(f"Error processing document {filepath}: {e}")
+                        
+                        # Rollback if document was created
+                        if doc_id is not None:
+                            logger.warning(f"Rolling back document {doc_info['title']} due to chunk insertion failure")
+                            
+                            # Delete the document (chunks will be deleted via CASCADE constraint)
+                            self.adapter.delete_document(doc_id)
+                            
+                            logger.info(f"Rollback complete for document {doc_info['title']}")
+                        
+                        # Re-raise to be caught by outer exception handler
+                        raise
                 
                 # Update metrics with batch statistics
                 if self.unified_metrics and total_batches > 0:

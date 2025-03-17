@@ -108,8 +108,12 @@
 
 ## Day 14
 - Catch up on dev log
-- Plan for proceeding:
+{Plan for proceeding:
   - Figure how to solve doc/chunk dislink
     - Can't leave db in bad state
     - Can't leave code where it will in future leave db in bad state
   - Implement md file which logs files that fail (likely corrupted), and group (subdir), pasing them over and marking them for later
+  - Delete all pinecone and chroma methods leftover}
+- Deleted false flag Breakthrough from docs table, and manifest
+- Adding transaction so docs and chunks must be added together
+  - if chunk fails insertion to table, previous chunks get deleted from table, and doc gets deleted from table, and removed from manifest

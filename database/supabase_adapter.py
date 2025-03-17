@@ -61,21 +61,16 @@ class SupabaseAdapter:
         
         response = self.supabase.table("documents").insert(document_data).execute()
         
-        # If document was successfully added to the database, update manifest
+        # Return document ID if successful
         if response.data and len(response.data) > 0:
             document_id = response.data[0]["id"]
-            
-            # Update manifest if path was provided
-            if hasattr(self, 'manifest_path'):
-                self._update_manifest_simple(filepath)
-                
             return document_id
         
         return None
-        
-    def _update_manifest_simple(self, filepath: str) -> None:
+    
+    def update_manifest(self, filepath: str) -> None:
         """
-        Simple function to update the manifest when a document is added to the database.
+        Update the manifest to indicate a document has been successfully processed.
         
         Args:
             filepath: Path to the file that was added to the database
@@ -103,6 +98,28 @@ class SupabaseAdapter:
             logger.info(f"Updated manifest with successfully processed document: {file_path.name}")
         except Exception as e:
             logger.error(f"Error updating manifest: {e}")
+    
+    def delete_document(self, document_id: str) -> bool:
+        """
+        Delete a document and all its chunks (via CASCADE constraint).
+        
+        Args:
+            document_id: ID of the document to delete
+            
+        Returns:
+            True if deletion was successful, False otherwise
+        """
+        try:
+            response = self.supabase.table("documents").delete().eq("id", document_id).execute()
+            success = len(response.data) > 0
+            if success:
+                logger.info(f"Successfully deleted document with ID {document_id}")
+            else:
+                logger.warning(f"No document found with ID {document_id} to delete")
+            return success
+        except Exception as e:
+            logger.error(f"Error deleting document {document_id}: {e}")
+            return False
     
     def add_chunks_batch(self, chunks: List[Dict[str, Any]]) -> List[str]:
         """
