@@ -116,4 +116,6 @@
   - Delete all pinecone and chroma methods leftover}
 - Deleted false flag Breakthrough from docs table, and manifest
 - Adding transaction so docs and chunks must be added together
-  - if chunk fails insertion to table, previous chunks get deleted from table, and doc gets deleted from table, and removed from manifest
+  - if chunk fails insertion to table, previous chunks get deleted from table,
+  - Only add to manifest after all succeed
+  - Tested: rollback worked (on doc at least), but we still need sanitation for null chars in pdf

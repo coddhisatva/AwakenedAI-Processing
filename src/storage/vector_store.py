@@ -383,7 +383,7 @@ class SupabaseVectorStore(VectorStoreBase):
                         for chunk in doc_info["chunks"]:
                             chunks_to_insert.append({
                                 "document_id": doc_id,
-                                "content": chunk["content"],
+                                "content": self._sanitize_text(chunk["content"]),
                                 "metadata": chunk["metadata"],
                                 "embedding": chunk["embedding"]
                             })
@@ -562,3 +562,19 @@ class SupabaseVectorStore(VectorStoreBase):
         except Exception as e:
             logger.error(f"Error retrieving document {doc_id} from Supabase: {str(e)}")
             return None
+
+    def _sanitize_text(self, text: str) -> str:
+        """
+        Sanitize text by removing problematic characters that might cause database insertion issues
+        
+        Args:
+            text: The text to sanitize
+            
+        Returns:
+            Sanitized text
+        """
+        if not text:
+            return ""
+        
+        # Remove null characters which cause PostgreSQL errors
+        return text.replace('\x00', '')
