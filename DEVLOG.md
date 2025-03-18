@@ -142,3 +142,7 @@
 - Fixed db so cascade delete exists docs > chunks
 - Deleted edge case document
 - Set batch_id properly in db
+- Processed rest of 1C into db
+- 436 docs in db (after manually deleting a personal note and invoice from spring 2023)
+- fixed issue that caused rare chunk overflow
+- discovered html, mhtml, ogg, jpeg, gif files in directory which account for files not picked up by system
