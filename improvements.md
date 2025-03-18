@@ -1,0 +1,3 @@
+A couple things I've noticed that could be improved, due to ai implementing dupes or inefficient methods, that I didn't catch til later (I want to mark them down somewhere but not worth addressing rn):
+-Some methods are defined twice, both in rag_pipeline.py and in a subcomponent (like embedder.py), such as _count_tokens -- these could be abstracted and un-duped
+-Tokenizer initialized individually in each method in rag_pipeline.py, unline in embedder.py which is more efficient

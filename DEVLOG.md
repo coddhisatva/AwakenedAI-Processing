@@ -140,3 +140,5 @@
 ## Day 16
 - Added $10 openAI for embedding
 - Fixed db so cascade delete exists docs > chunks
+- Deleted edge case document
+- Set batch_id properly in db

@@ -16,6 +16,7 @@ from src.embedding.embedder import DocumentEmbedder
 from src.storage.vector_store import VectorStoreBase, SupabaseVectorStore
 from database.supabase_adapter import SupabaseAdapter
 from src.pipeline.metrics import PipelineMetrics, PhaseTimer
+import tiktoken
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -234,20 +235,21 @@ class RAGPipeline:
         
         return manifest_files, database_files, new_files
     
-    # Add this helper function for counting tokens
     def _count_tokens(self, text: str) -> int:
         """
-        Count the number of tokens in a text string.
-        This is a simple approximation - OpenAI's tokenizer may count slightly differently.
+        Count the number of tokens in a text string using tiktoken.
         
         Args:
             text: The text to count tokens for
             
         Returns:
-            Approximate number of tokens
+            Exact token count as counted by OpenAI
         """
-        # A simple approximation: 1 token ≈ 4 characters for English text
-        return len(text) // 4
+        # Initialize tokenizer if needed
+        if not hasattr(self, '_tokenizer'):
+            self._tokenizer = tiktoken.get_encoding("cl100k_base")
+        # Simply return the token count
+        return len(self._tokenizer.encode(text))
         
     def _split_chunk_by_tokens(self, chunk: Dict[str, Any], max_tokens: int = 8000) -> List[Dict[str, Any]]:
         """
@@ -261,29 +263,40 @@ class RAGPipeline:
             List of smaller chunks
         """
         text = chunk["content"]
-        total_tokens = self._count_tokens(text)
+        
+        # Get the tokenizer
+        if not hasattr(self, '_tokenizer'):
+            self._tokenizer = tiktoken.get_encoding("cl100k_base")
+        
+        # Get tokens for the text
+        tokens = self._tokenizer.encode(text)
+        total_tokens = len(tokens)
         
         if total_tokens <= max_tokens:
             return [chunk]
             
-        # If chunk is too large, split it
+        # If chunk is too large, split it based on tokens
         logger.warning(f"Chunk too large ({total_tokens} tokens). Splitting into smaller chunks.")
         
-        # Estimate characters per token
-        chars_per_token = len(text) / total_tokens
-        max_chars = int(max_tokens * chars_per_token * 0.9)  # 10% margin of safety
+        # Calculate the actual maximum tokens with 10% safety margin
+        safe_max_tokens = int(max_tokens * 0.9)
         
-        # Split the text into smaller chunks
+        # Split the text into smaller chunks based on tokens
         result_chunks = []
-        for i in range(0, len(text), max_chars):
-            sub_text = text[i:i + max_chars]
+        for i in range(0, total_tokens, safe_max_tokens):
+            # Get a slice of tokens
+            token_slice = tokens[i:i + safe_max_tokens]
+            
+            # Convert tokens back to text
+            sub_text = self._tokenizer.decode(token_slice)
+            
             if sub_text:
                 result_chunks.append({
                     "content": sub_text,
                     "metadata": chunk["metadata"].copy()
                 })
                 
-        logger.info(f"Split large chunk into {len(result_chunks)} smaller chunks.")
+        logger.info(f"Split large chunk into {len(result_chunks)} smaller chunks using token-based splitting.")
         return result_chunks
 
     def process_files(self, file_paths: List[str], batch_size: int) -> int:
@@ -562,7 +575,7 @@ class RAGPipeline:
             batch_size: Number of documents to process in each batch
             extensions: List of file extensions to include
             force_reprocess: Whether to reprocess files already in manifest or database
-            update_manifest_only: Only update manifest with database files, don't process any
+            update_manifest_only: Only update manifest with database files, don't process any files
             
         Returns:
             Statistics about the processing run
