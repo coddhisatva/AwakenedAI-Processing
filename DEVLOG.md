@@ -136,3 +136,7 @@
 - make change to capture all upper-case extensions
 - Got it, all of 1B processed that we need (Dan koe has no text anyway)
 - 132 docs in db now
+
+## Day 16
+- Added $10 openAI for embedding
+- Fixed db so cascade delete exists docs > chunks
