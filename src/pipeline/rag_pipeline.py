@@ -579,6 +579,9 @@ class RAGPipeline:
             # Extract the subdirectory name from the directory path
             subdir = Path(directory_path).name
             
+            # Set the batch_id for the extractor to ensure all processed documents get the correct batch_id
+            self.extractor.batch_id = subdir
+            
             # Load the failed documents manifest for this subdirectory
             self.failed_manifest = self._load_failed_manifest(subdir)
             
@@ -874,7 +877,12 @@ class RAGPipeline:
             dir_path.mkdir(exist_ok=True, parents=True)
         
         # Initialize components
-        extractor = DocumentExtractor(raw_dir=raw_dir, processed_dir=processed_dir, skip_ocr=args.skip_ocr)
+        extractor = DocumentExtractor(
+            raw_dir=raw_dir, 
+            processed_dir=processed_dir, 
+            skip_ocr=args.skip_ocr,
+            batch_id=args.subdir  # Pass the subdirectory name as batch_id
+        )
         chunker = SemanticChunker(processed_dir=processed_dir, chunks_dir=chunks_dir)
         embedder = DocumentEmbedder(chunks_dir=chunks_dir, embeddings_dir=embeddings_dir)
         vector_store = SupabaseVectorStore(manifest_path=args.manifest_path)

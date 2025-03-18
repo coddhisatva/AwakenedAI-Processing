@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class DocumentExtractor:
     """Document extractor for PDF and EPUB files."""
     
-    def __init__(self, raw_dir: str, processed_dir: str, skip_ocr: bool = False):
+    def __init__(self, raw_dir: str, processed_dir: str, skip_ocr: bool = False, batch_id: str = None):
         """
         Initialize the document extractor.
         
@@ -32,11 +32,13 @@ class DocumentExtractor:
             raw_dir: Directory containing raw documents
             processed_dir: Directory to store processed text
             skip_ocr: Whether to skip OCR processing for PDFs
+            batch_id: Identifier for the current processing batch
         """
         self.raw_dir = Path(raw_dir)
         self.processed_dir = Path(processed_dir)
         self.processed_dir.mkdir(exist_ok=True, parents=True)
         self.skip_ocr = skip_ocr
+        self.batch_id = batch_id
         
         # Track processing statistics
         self.stats = {
