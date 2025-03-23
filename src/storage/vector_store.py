@@ -348,7 +348,7 @@ class SupabaseVectorStore(VectorStoreBase):
                 })
             
             all_chunk_ids = []
-            max_batch_size = 200  # Recommended batch size for Supabase
+            max_batch_size = 50  # Reduced from 200 for HNSW indexing to prevent timeouts
             
             # Track batch statistics
             total_batches = 0

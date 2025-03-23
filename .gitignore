@@ -42,3 +42,6 @@ data/
 *.log 
 
 .cursor/
+group1B_files.txt
+group1b_all_docs.txt
+group1b_sorted.txt

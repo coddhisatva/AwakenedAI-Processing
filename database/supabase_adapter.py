@@ -11,6 +11,7 @@ from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 import numpy as np
 from supabase import create_client, Client
+from supabase.client import ClientOptions  # Import ClientOptions for timeout settings
 from pgvector.psycopg import register_vector
 
 # Configure logging
@@ -30,7 +31,15 @@ class SupabaseAdapter:
         if not supabase_url or not supabase_key:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
         
-        self.supabase: Client = create_client(supabase_url, supabase_key)
+        # Create Supabase client with increased timeout for HNSW indexing operations
+        self.supabase: Client = create_client(
+            supabase_url, 
+            supabase_key,
+            options=ClientOptions(
+                postgrest_client_timeout=120,  # Increase timeout to 2 minutes (120s)
+                storage_client_timeout=120     # Increase storage timeout as well
+            )
+        )
         
         # Set manifest path if provided
         if manifest_path:
@@ -149,8 +158,8 @@ class SupabaseAdapter:
             })
         
         # Implement retry with exponential backoff
-        max_retries = 5
-        base_delay = 1  # starting delay in seconds
+        max_retries = 5  # Standard number of retries
+        base_delay = 2   # Increased from 1 for more breathing room
         chunk_ids = []
         
         for attempt in range(max_retries):

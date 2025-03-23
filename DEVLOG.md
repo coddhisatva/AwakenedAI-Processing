@@ -146,3 +146,12 @@
 - 436 docs in db (after manually deleting a personal note and invoice from spring 2023)
 - fixed issue that caused rare chunk overflow
 - discovered html, mhtml, ogg, jpeg, gif files in directory which account for files not picked up by system
+
+## Day 17
+- Update ReadMe
+
+## Day 18
+- After clearing db, added HNSW indexing here
+- Reprocessing, but now timeout issues bc of indexing
+  - Altered settings to deal with
+- Reprocessed 0A
