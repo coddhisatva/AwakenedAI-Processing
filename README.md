@@ -24,7 +24,7 @@ The Awakened AI project is structured as a multi-repository system:
    
 2. **Web Application Repository** (Separate Repository)
    - Frontend interface built with Next.js
-   - Query API
+   - Query API and RAG system implementation
    - User authentication
    - Document management
 
@@ -35,7 +35,7 @@ The Awakened AI project is structured as a multi-repository system:
 
 ## System Architecture
 
-### 1. Data Processing Pipeline
+### Data Processing Pipeline
 
 The data processing pipeline consists of several stages:
 
@@ -69,78 +69,6 @@ Raw Documents → Text Extraction → Semantic Chunking → Embedding Generation
    - Implemented with Supabase's pgvector extension
    - Abstract interface allows for different backends
 
-### 2. RAG System
-
-The RAG system provides the query interface and response generation:
-
-```
-User Query → Query Processing → Vector Search → Context Retrieval → LLM Response Generation
-```
-
-#### Components:
-
-1. **Query Engine** (`src/interface/query.py`)
-   - Processes user queries
-   - Interfaces with vector database to retrieve relevant chunks
-   - Integrates with LLM service for response generation
-   - Formats responses with source attribution
-
-2. **LLM Service** (`src/interface/llm.py`)
-   - Connects to OpenAI API with GPT-4 Turbo by default
-   - Handles prompt construction with retrieved context
-   - Manages API interactions with retry logic
-   - Returns structured responses with metadata
-
-3. **Chat CLI** (`tools/chat_cli.py`)
-   - Interactive command-line interface for querying the system
-   - Rich text formatting for user experience
-   - Displays responses with source attribution
-   - Interactive session management
-
-## Directory Structure
-
-```
-AwakenedAI/
-├── data/
-│   ├── raw/                  # Raw document files (PDF, EPUB, etc.)
-│   ├── processed/            # Extracted text and metadata (JSON)
-│   ├── chunks/               # Semantic chunks (JSON)
-│   └── embeddings/           # Generated embeddings (JSON)
-├── src/
-│   ├── extraction/           # Document extraction modules
-│   │   └── extractor.py      # Document extraction implementation
-│   ├── processing/           # Text processing modules
-│   │   └── chunker.py        # Semantic chunking implementation
-│   ├── embedding/            # Embedding generation modules
-│   │   └── embedder.py       # Embedding generation implementation
-│   ├── storage/              # Vector database modules
-│   │   └── vector_store.py   # Vector database implementation
-│   ├── interface/            # User interface modules
-│   │   ├── query.py          # Query engine implementation
-│   │   └── llm.py            # LLM service implementation
-│   ├── pipeline/             # Pipeline integration
-│   │   └── rag_pipeline.py   # RAG pipeline implementation
-│   └── retrieval/            # Vector search and retrieval modules
-├── database/
-│   └── supabase_adapter.py   # Supabase database adapter
-├── tools/
-│   ├── process_sample.py     # Tool for processing sample documents
-│   ├── query_cli.py          # Basic query CLI tool
-│   ├── chat_cli.py           # Interactive chat interface
-│   ├── check_collection.py   # Tool for checking vector DB contents
-│   └── show_sources.py       # Tool for displaying document sources
-├── tests/
-│   ├── test_extractor.py     # Tests for document extraction
-│   ├── test_chunker.py       # Tests for semantic chunking
-│   ├── test_embedder.py      # Tests for embedding generation
-│   ├── test_vector_store.py  # Tests for vector store integration
-│   └── test_llm_integration.py # Tests for LLM integration
-├── requirements.txt          # Project dependencies
-├── .env                      # Environment variables and configuration
-├── DEVLOG.md                 # Development log
-└── TECHNICAL_DOCS.md         # Technical documentation
-```
-
 ## Data Flow
 
 1. **Document Extraction**:
@@ -161,17 +89,7 @@ AwakenedAI/
 4. **Vector Database Storage**:
    - Input: Embeddings and metadata from `data/embeddings/`
    - Process: Store in Supabase with pgvector extension
-   - Output: Searchable vector database in Supabase
-
-5. **Query Processing**:
-   - Input: User query
-   - Process: Convert query to embedding, search vector database
-   - Output: Relevant document chunks with metadata
-
-6. **Response Generation**:
-   - Input: Retrieved document chunks and user query
-   - Process: Send context and query to LLM for synthesis
-   - Output: Comprehensive answer with source attribution
+   - Output: Searchable vector database in Supabase accessible by the Web Application
 
 ## Implementation Details
 
@@ -225,24 +143,6 @@ The `SupabaseAdapter` class handles direct interactions with Supabase:
 - Vector similarity search using pgvector
 - Document metadata management
 
-### Query Engine (`src/interface/query.py`)
-
-The `QueryEngine` class provides the interface for querying the system:
-
-- Initialization with RAG pipeline and LLM service
-- Basic retrieval methods returning raw results
-- Enhanced methods for LLM-powered responses
-- Formatting utilities for text output with attribution
-
-### LLM Service (`src/interface/llm.py`)
-
-The `LLMService` class handles interactions with the language model:
-
-- Initialization with GPT-4 Turbo as the default model
-- Response generation from context and query
-- Retry logic for API resilience
-- Structured response format with source attribution
-
 ## Configuration
 
 The project uses environment variables for configuration, stored in the `.env` file:
@@ -253,8 +153,6 @@ The project uses environment variables for configuration, stored in the `.env` f
 - `CHUNK_SIZE`: Target size of each chunk in characters
 - `CHUNK_OVERLAP`: Overlap between chunks in characters
 - `EMBEDDING_MODEL`: OpenAI embedding model to use
-- `LLM_MODEL`: OpenAI model for response generation (default: "gpt-4-turbo")
-- `LLM_TEMPERATURE`: Temperature parameter for LLM responses
 
 ## Testing
 
@@ -264,7 +162,6 @@ Each component has a corresponding test script:
 - `test_chunker.py`: Tests the semantic chunking functionality
 - `test_embedder.py`: Tests the embedding generation
 - `test_vector_store.py`: Tests the Supabase vector store implementation
-- `test_llm_integration.py`: Tests the LLM response generation
 
 ## Vector Database Implementation
 
@@ -284,39 +181,12 @@ The project has migrated from ChromaDB to Supabase with pgvector:
    - Handles the planned 10,000-15,000 documents efficiently
 
 2. **Integration**
-   - Works well with the planned web application
+   - Works well with the web application
    - Provides authentication and other services needed for the full project
 
 3. **Cost-Effectiveness**
    - Reasonable pricing for the scale of the project
    - Predictable cost structure
-
-## LLM Integration
-
-The LLM integration provides AI-generated responses based on retrieved context:
-
-### Components:
-
-1. **RAGResponse Data Structure**:
-   - Contains the AI-generated answer
-   - Includes source attribution information
-   - Tracks metadata like model used and processing time
-   - Provides access to the full context used
-
-2. **Prompt Construction**:
-   - Formats retrieved context for optimal LLM understanding
-   - Creates system prompts with appropriate instructions
-   - Structures user prompts with query and context
-
-3. **Error Handling**:
-   - Implements retry logic for API failures
-   - Handles rate limiting gracefully
-   - Provides informative error messages
-
-4. **Source Attribution**:
-   - Extracts metadata from retrieved chunks
-   - Associates responses with source documents
-   - Formats citations with available metadata (title, author, etc.)
 
 ## Current Status
 
@@ -331,11 +201,6 @@ The LLM integration provides AI-generated responses based on retrieved context:
 - ✅ Enhanced metadata extraction implemented:
   - Extracts title, author, and other document properties from PDFs
   - Fallback to filename when metadata is missing
-- ✅ LLM integration is implemented and tested:
-  - Upgraded to GPT-4 Turbo as the default model
-  - Connected to OpenAI API for response generation
-  - Created interactive chat interface
-  - Implemented enhanced source attribution with document titles
 - ✅ Unified performance metrics system:
   - Comprehensive tracking across all pipeline phases
   - Performance analytics and visualization tools
@@ -356,28 +221,3 @@ source venv/bin/activate && python -m src.pipeline.rag_pipeline --subdir <subdir
 ```
 
 Replace `<subdir>` with the specific subdirectory you want to process from the `data/raw/` directory. This is the default and recommended way to run the pipeline. Additional parameters can be added as needed, but specifying the subdirectory is the only required change.
-
-## Scaling Considerations
-
-- Implementation of EPUB support for remaining document types
-- Parallel processing for improved throughput
-- Incremental processing of the full document collection
-- Integration with the web application (future repository)
-- Monitoring and optimization of vector storage
-
-## Web Application Future Development
-
-The web application will be developed in a separate repository with:
-
-- Next.js frontend with TypeScript and Tailwind CSS
-- React components using Shadcn UI
-- User authentication via Supabase Auth
-- API routes for document querying and management
-- Integration with this processing pipeline
-
-## Documents Currently Processed:
-1. Cure_Tooth_Decay_Remineralize_Cavities_and_Repair_Your_Teeth_Naturally.pdf
-2. How_to_Get_Rich_-_Felix_Dennis.pdf
-3. Niacin_The_Real_Story_Learn_about_the_Wonderful_Healing_Properties.pdf
-4. The-Book_of_five_rings_-_Kenji_tokitsu-Japanese-strategy.pdf
-5. _Dr_Mark_Sircus_Transdermal_Magnesium_Therapy_A_New_Modality_for.pdf
