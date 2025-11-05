@@ -1,7 +1,14 @@
 # AwakenedAI-Processing
 Processing repo, one of 2 repos for Awakened AI: A RAG-based knowledge system transforming a curated library of ebooks spanning mysticism, spirituality, history, psychology, alternative health, philosophy, and more, into a comprehensive AI knowledge base using vector embeddings and retrieval-augmented generation.
 
-Site: https://awakened-ai-web.vercel.app/
+![AwakenedAI Cover](screenshots/AwakenedAI%20Cover.png)
+
+Live Site: https://awakened-ai-web.vercel.app/
+
+Web Repo: https://github.com/coddhisatva/AwakenedAI-Web
+
+# Loom Video Demo
+Click this link to check out a loom video demo of AwakenedAI: https://www.loom.com/share/ff25ceb50d1349119dcdadffd1145893
 
 # Awakened AI - Technical Documentation
 
